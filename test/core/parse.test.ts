@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseMoney, parseNumber, parseDuration, parseDateTime, parseTime, numericValue, absUrl } from '../../src/core/extract/parse.ts';
-import { applySelect } from '../../src/core/extract/extract.ts';
+import { applySelect, plausible } from '../../src/core/extract/extract.ts';
 
 describe('value parsers', () => {
   it.each([
@@ -48,5 +48,14 @@ describe('select rules', () => {
     expect(applySelect(items, 'min(price)', [false, true, true])).toBe(1);
     expect(applySelect(items, 'first', [false, true, true])).toBe(1);
     expect(applySelect(items, 'min(price)', [false, false, false])).toBeUndefined();
+  });
+});
+
+describe('plausible values', () => {
+  it('money needs a currency or little text around the number', () => {
+    expect(plausible('money', 'US $278.00', parseMoney('US $278.00'))).toBe(true);
+    expect(plausible('money', '278.00', parseMoney('278.00'))).toBe(true);
+    expect(plausible('money', 'Цена: 700 000', parseMoney('Цена: 700 000'))).toBe(true);
+    expect(plausible('money', '8 Microphone Active Noise Cancellation', parseMoney('8 Microphone Active Noise Cancellation'))).toBe(false);
   });
 });

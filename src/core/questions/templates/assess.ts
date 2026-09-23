@@ -10,7 +10,8 @@ export const PAGE_KINDS = {
   item_details: 'The page shows the details of one item, offer or product.',
   login: 'The page asks to sign in or register before continuing.',
   captcha: 'The page shows a CAPTCHA, a bot check or an "are you human" challenge.',
-  error: 'The page shows an error: not found, server error, access denied or nothing found.',
+  error: 'The page shows an error instead of its content: a server error, page not found or access denied.',
+  no_results: 'The search ran but found nothing: an empty result list or a "nothing found" message.',
   checkout: 'The page collects passenger, shipping or payment details to complete a purchase.',
   other: 'None of the above.',
 } as const;

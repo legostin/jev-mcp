@@ -82,6 +82,7 @@ type Subintent =
   | { type: 'close_popup' }
   | { type: 'scroll' }
   | { type: 'go_back' }
+  | { type: 'reload' }
   | { type: 'wait' }
   | { type: 'done'; reason: string }
   | { type: 'blocker'; kind: string; summary: string };
@@ -156,6 +157,9 @@ export class Task extends Emitter<TaskEvents> {
   private dismissed = new Set<string>();
   private submitsDone = 0;
   private revealTried = new Set<string>();
+  /** Error pages already reloaded once (by URL). */
+  private reloaded = new Set<string>();
+  private noResultsOn: string | null = null;
   /** Params changed since the last submit: filters on list pages apply only after "Show N results". */
   private dirty = false;
   private sortTried = false;
@@ -682,6 +686,11 @@ export class Task extends Emitter<TaskEvents> {
       this.seen.set(loopKey, Math.max(0, seen - 1));
     }
     if (out.outcome === 'ok') this.rejected.delete(subLabel);
+    // After a search, a filter that moved the page (new URL) was applied by the site itself: no second submit.
+    const afterUrl = this.deps.port.lastModel()?.url;
+    if (out.outcome === 'ok' && this.submitsDone > 0 && ['fill_param', 'pick_suggestion', 'pick_date'].includes(sub.type) && afterUrl && afterUrl !== model.url) {
+      this.dirty = false;
+    }
     if (out.outcome === 'failed') {
       const n = (this.failures.get(subLabel) ?? 0) + 1;
       this.failures.set(subLabel, n);
@@ -761,6 +770,17 @@ export class Task extends Emitter<TaskEvents> {
   private async chooseSubintent(model: Model, a: AssessOutput): Promise<Subintent> {
     const th = this.th();
     const yes = (v: number, kind: DecisionKind = 'assess') => gateNoul(v, th[kind].noul) === 'yes';
+    // A server error is often transient: reload once, then go back. "Nothing found" is a question for the agent.
+    if (a.pageKind === 'error' && a.pageKindConfidence >= th.assess.choice.escalate) {
+      return this.reloaded.has(model.url) ? { type: 'go_back' } : { type: 'reload' };
+    }
+    if (a.pageKind === 'no_results' && a.pageKindConfidence >= th.assess.choice.act && this.spec.result && this.noResultsOn !== model.signature) {
+      // Asked once per page state; after the answer (a new param, a hint, or "continue") the usual rules apply.
+      this.noResultsOn = model.signature;
+      await this.escalate('assess', 'The search found nothing for these params. Change a param (set_param), give a hint, answer "continue" to read the page anyway, or abort.', {
+        answer_with: ['set_param', 'hint', 'continue', 'abort'],
+      });
+    }
     if (a.pageKind === 'captcha' && a.pageKindConfidence >= th.assess.choice.escalate) {
       return { type: 'blocker', kind: 'captcha', summary: 'The page shows a CAPTCHA or bot check. Solve it in the browser (or ask the user), then answer "continue".' };
     }
@@ -913,6 +933,12 @@ export class Task extends Emitter<TaskEvents> {
         await (await this.page()).scroll(model.viewport.h * 0.8);
         await this.settle();
         return { outcome: 'ok', note: 'scrolled down', action: { type: 'scroll' } };
+      }
+      case 'reload': {
+        this.reloaded.add(model.url);
+        await (await this.page()).navigate(model.url);
+        await this.settle();
+        return { outcome: 'ok', note: 'the page showed an error; reloaded it', action: { type: 'reload' } };
       }
       case 'go_back': {
         const ok = await (await this.page()).back();

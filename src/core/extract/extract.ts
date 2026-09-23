@@ -27,6 +27,18 @@ export interface ExtractOutput {
 }
 
 const fieldType = (f: FieldSpec): FieldType => (typeof f === 'string' ? f : f.type);
+
+/**
+ * Is a parsed value believable for its type? Money needs a currency or a text that is little more than the number
+ * ("8 Microphone Active Noise Cancellation" is not a price of 8).
+ */
+export function plausible(type: FieldType, text: string, value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (type !== 'money') return true;
+  if ((value as Money).currency) return true;
+  const words = text.replace(/[-+]?\d[\d\s.,']*/g, ' ').replace(/[^\p{L}]+/gu, ' ').trim();
+  return words.length <= 12;
+}
 const fieldAbout = (name: string, f: FieldSpec): string => {
   const about = typeof f === 'string' ? '' : f.about ?? '';
   const human = name.replace(/[_-]+/g, ' ');
@@ -196,14 +208,17 @@ export async function extractResults(
         row[f] = href ?? null;
         continue;
       }
-      let value = leaf ? parseField(type, leaf.el.text || leaf.el.name, base, opts.refDate) : null;
+      const textOf = (l: Leaf) => l.el.text || l.el.name;
+      let value = leaf ? parseField(type, textOf(leaf), base, opts.refDate) : null;
+      if (leaf && !plausible(type, textOf(leaf), value)) value = null;
       if ((value === null || value === undefined) && key && type !== 'string') {
-        // Items differ slightly (extra badges shift positions): try leaves of the same kind/tag/class that parse.
+        // Items differ slightly (extra badges shift positions): try leaves of the same kind/tag/class that parse,
+        // then, for money, any leaf of the item that reads as a price with a currency.
         const baseKey = key.replace(/#\d+$/, '');
-        for (const l of leaves) {
-          if (!l.key.startsWith(`${baseKey}#`) || l === leaf) continue;
-          const v = parseField(type, l.el.text || l.el.name, base, opts.refDate);
-          if (v !== null && v !== undefined) { value = v; break; }
+        const tries = [...leaves.filter((l) => l.key.startsWith(`${baseKey}#`) && l !== leaf), ...(type === 'money' ? leaves : [])];
+        for (const l of tries) {
+          const v = parseField(type, textOf(l), base, opts.refDate);
+          if (plausible(type, textOf(l), v) && (type !== 'money' || l.key.startsWith(`${baseKey}#`) || (v as Money).currency)) { value = v; break; }
         }
       }
       // A currency sign often sits in its own element next to the amount ("111 888" + "₸").
