@@ -1,5 +1,6 @@
 import type { Database } from '../trace/sqlite.ts';
 import { newId } from '../util/ids.ts';
+import type { Hint } from '../questions/step.ts';
 
 export interface MemoryEntry {
   id: string; domain: string; pageKind: string; key: string; sig: string; weight: number;
@@ -23,6 +24,9 @@ export class MemoryStore {
       CREATE UNIQUE INDEX IF NOT EXISTS site_memory_uniq ON site_memory(domain, page_kind, key, sig);
       CREATE TABLE IF NOT EXISTS site_hints (id TEXT PRIMARY KEY, domain TEXT, text TEXT, created_at INTEGER);
     `);
+    // Hints remember which step and param they were given for (older rows have none: they apply by wording).
+    const cols = new Set((db.prepare('PRAGMA table_info(site_hints)').all() as any[]).map((c) => c.name));
+    for (const c of ['step', 'key', 'about']) if (!cols.has(c)) db.exec(`ALTER TABLE site_hints ADD COLUMN ${c} TEXT`);
   }
 
   private row(r: any): MemoryEntry {
@@ -65,20 +69,24 @@ export class MemoryStore {
       .run(r.weight - 1, consecutive, consecutive >= 2 ? 1 : 0, Date.now(), id);
   }
 
-  addHint(domain: string, text: string): void {
+  addHint(domain: string, text: string, bind: { step?: string; key?: string; about?: string } = {}): void {
     if (!domain) return;
     const exists = this.db.prepare('SELECT id FROM site_hints WHERE domain = ? AND text = ?').get(domain, text);
-    if (!exists) this.db.prepare('INSERT INTO site_hints (id, domain, text, created_at) VALUES (?, ?, ?, ?)').run(newId('h'), domain, text, Date.now());
+    if (!exists) {
+      this.db.prepare('INSERT INTO site_hints (id, domain, text, created_at, step, key, about) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(newId('h'), domain, text, Date.now(), bind.step ?? null, bind.key ?? null, bind.about ?? null);
+    }
   }
 
-  hints(domain: string): string[] {
-    return (this.db.prepare('SELECT text FROM site_hints WHERE domain = ? ORDER BY created_at').all(domain) as any[]).map((r) => r.text);
+  hints(domain: string): Hint[] {
+    return (this.db.prepare('SELECT text, step, key, about FROM site_hints WHERE domain = ? ORDER BY created_at').all(domain) as any[])
+      .map((r) => ({ text: r.text, source: 'site' as const, ...(r.step ? { step: r.step } : {}), ...(r.key ? { key: r.key } : {}), ...(r.about ? { about: r.about } : {}) }));
   }
 
   list(): { entries: MemoryEntry[]; hints: { id: string; domain: string; text: string }[] } {
     return {
       entries: (this.db.prepare('SELECT * FROM site_memory ORDER BY domain, key, weight DESC').all() as any[]).map((r) => this.row(r)),
-      hints: this.db.prepare('SELECT id, domain, text FROM site_hints ORDER BY domain, created_at').all() as any[],
+      hints: this.db.prepare('SELECT id, domain, text, step, key, about FROM site_hints ORDER BY domain, created_at').all() as any[],
     };
   }
 

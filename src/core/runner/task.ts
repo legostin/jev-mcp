@@ -6,7 +6,7 @@ import type { TraceStore } from '../trace/store.ts';
 import type { PageModel, ElementNode, Region } from '../perception/types.ts';
 import type { ModelState } from '../perception/model.ts';
 import { diffModels } from '../perception/diff.ts';
-import { describeElement, renderDiff } from '../perception/render.ts';
+import { describeElement, renderCandidate, renderDiff } from '../perception/render.ts';
 import { parseCalendarCells } from '../perception/calendar.ts';
 import { groundByIntent, type GroundResult, type Intent } from '../questions/templates/ground.ts';
 import { buildAssess, readAssess, type AssessOutput } from '../questions/templates/assess.ts';
@@ -16,6 +16,8 @@ import { buildActionClass, readActionClass } from '../questions/templates/safety
 import { buildVerify, readVerify } from '../questions/templates/verify.ts';
 import { runQuestions, choiceOf, noulOf, type QuestionContext } from '../questions/run.ts';
 import { buildState } from '../questions/state.ts';
+import { aboutOf, hintsFor, paramCard, paramIntent, stepCard, type Hint, type StepCard } from '../questions/step.ts';
+import { hadEffect, rollbackPlan } from './rollback.ts';
 import { gateChoice, gateNoul, topCandidates } from '../decide/gating.ts';
 import { extractResults, applySelect, type ExtractOutput } from '../extract/extract.ts';
 import { inRange } from '../extract/dates.ts';
@@ -111,7 +113,7 @@ export class Task extends Emitter<TaskEvents> {
   state: TaskState = 'queued';
   stateReason?: string;
   private deps: TaskDeps;
-  private hints: string[];
+  private hints: Hint[];
   private params: Record<string, ParamSpec>;
   private status: Record<string, ParamStatus> = {};
   private absentOn: Record<string, string> = {};
@@ -151,6 +153,10 @@ export class Task extends Emitter<TaskEvents> {
   private sortTried = false;
   private sortedBy: string | null = null;
   private collected = new Map<string, { item: Record<string, unknown>; snippets: string[]; url: string }>();
+  /** Per step: elements tried and rolled back (by signature), so the next grounding skips them. */
+  private rejected = new Map<string, { sig: string; desc: string }[]>();
+  /** Set when a step ended in a rollback: the retry is progress, not a loop. */
+  private trialRolledBack = false;
 
   constructor(spec: TaskSpec, deps: TaskDeps, id = newId('t')) {
     super();
@@ -158,7 +164,7 @@ export class Task extends Emitter<TaskEvents> {
     this.sessionId = deps.sessionId;
     this.spec = spec;
     this.deps = deps;
-    this.hints = [...spec.hints];
+    this.hints = spec.hints.map((text) => ({ text, source: 'task' as const }));
     this.params = structuredClone(spec.params);
     for (const k of Object.keys(this.params)) this.status[k] = 'pending';
   }
@@ -228,7 +234,7 @@ export class Task extends Emitter<TaskEvents> {
 
   update(patch: { params?: Record<string, ParamSpec>; hints?: string[]; confidence?: ConfidenceConfig; policy?: Partial<TaskSpec['policy']> }): void {
     if (patch.params) for (const [k, v] of Object.entries(patch.params)) { this.params[k] = v; this.status[k] = 'pending'; delete this.absentOn[k]; }
-    if (patch.hints) this.hints.push(...patch.hints);
+    if (patch.hints) this.hints.push(...patch.hints.map((text) => ({ text, source: 'task' as const })));
     if (patch.confidence) this.liveConfidence = patch.confidence;
     if (patch.policy) this.spec = { ...this.spec, policy: { ...this.spec.policy, ...patch.policy } };
   }
@@ -287,7 +293,7 @@ export class Task extends Emitter<TaskEvents> {
     }
     if (this.deps.memory && this.deps.getConfig().memory.enabled) {
       const host = hostOf(this.spec.site ?? (await page.url()));
-      for (const h of this.deps.memory.hints(host)) if (!this.hints.includes(h)) this.hints.push(h);
+      for (const h of this.deps.memory.hints(host)) if (!this.hints.some((x) => x.text === h.text)) this.hints.push(h);
     }
     this.lastInputCheck = this.now();
   }
@@ -410,8 +416,10 @@ export class Task extends Emitter<TaskEvents> {
     this.note(`answer to ${kind}: ${answer.type}${answer.type === 'pick' ? ` ${answer.ref}` : answer.type === 'hint' ? ` "${answer.text}"` : ''}`);
     if (answer.type === 'abort') throw new Cancelled(answer.reason ?? 'aborted by the agent');
     if (answer.type === 'hint') {
-      this.hints.push(answer.text);
-      if (answer.scope === 'domain' && this.deps.memory && model) this.deps.memory.addHint(hostOf(model.url), answer.text);
+      // A hint given to a question about one step belongs to that step and its param; others apply to the whole task.
+      const bind = kind === 'ground' ? this.hintBinding() : {};
+      this.hints.push({ text: answer.text, source: kind === 'ground' ? 'answer' : 'task', ...bind });
+      if (answer.scope === 'domain' && this.deps.memory && model) this.deps.memory.addHint(hostOf(model.url), answer.text, bind);
     }
     if (answer.type === 'thresholds') this.liveConfidence = answer.value;
     if (answer.type === 'set_param') {
@@ -422,8 +430,44 @@ export class Task extends Emitter<TaskEvents> {
     return answer;
   }
 
-  /** Grounding with memory fast path, forced refs from answers, and escalation when unsure. */
-  private async ground(sub: Subintent, intent: Intent, memoryKey?: string): Promise<{ el: ElementNode | null; res?: GroundResult; answer?: AnswerInput }> {
+  private hintBinding(): { step?: string; key?: string; about?: string } {
+    const sub = this.lastSub;
+    if (!sub) return {};
+    const key = 'key' in sub ? sub.key.split(':')[0] : undefined;
+    const p = key ? this.params[key] : undefined;
+    return { step: sub.type, ...(key && p ? { key, about: aboutOf(key, p) } : {}) };
+  }
+
+  private sortOrder(): string {
+    const m = (this.spec.result?.select ?? '').match(/^(min|max)\((\w+)\)$/);
+    if (!m) return 'as the goal asks';
+    const fieldSpec = this.spec.result!.schema[m[2]];
+    const about = (typeof fieldSpec === 'object' && fieldSpec.about) || m[2].replace(/_/g, ' ');
+    return m[1] === 'min' ? `by ${about}, lowest first (ascending, cheapest first)` : `by ${about}, highest first (descending)`;
+  }
+
+  /** What the step does, for JEV: the param and its value, or the step's purpose. */
+  private card(sub: Subintent): StepCard {
+    const key = 'key' in sub ? sub.key.split(':')[0] : undefined;
+    const p = key ? this.params[key] : undefined;
+    switch (sub.type) {
+      case 'fill_param': case 'pick_suggestion': case 'pick_date':
+        return p ? paramCard(sub.type, key!, p) : stepCard(sub.type, label(sub));
+      case 'reveal':
+        return p ? paramCard('reveal', key!, p, `find where the ${aboutOf(key!, p)} can be set`) : stepCard('reveal', 'show more search filters');
+      case 'apply_sort': return stepCard('apply_sort', `sort the results ${this.sortOrder()}`);
+      case 'submit': return stepCard('submit', 'submit the search form');
+      case 'dismiss_overlay': return stepCard('dismiss_overlay', `close the ${sub.overlayKind.replace(/_/g, ' ')} overlay`);
+      default: return stepCard(sub.type, label(sub));
+    }
+  }
+
+  /**
+   * Grounding with memory fast path, forced refs from answers, trials and escalation when unsure. `trial` in the
+   * result means the element is a best guess for a reversible step: the caller verifies the effect and calls
+   * `trialFailed` (roll back, try the next) when it did not work.
+   */
+  private async ground(sub: Subintent, intent: Intent, memoryKey?: string): Promise<{ el: ElementNode | null; res?: GroundResult; answer?: AnswerInput; trial?: boolean }> {
     const model = this.model!;
     const subLabel = label(sub);
     if (this.forcedRef && this.forcedRef.sub === subLabel) {
@@ -431,34 +475,46 @@ export class Task extends Emitter<TaskEvents> {
       this.forcedRef = null;
       if (el) return { el };
     }
+    const th = this.th();
+    const tried = this.rejected.get(subLabel) ?? [];
+    const trial = !!intent.trial && th.trial.enabled && tried.length < th.trial.tries;
+    intent = { ...intent, trial, exclude: tried.map((t) => t.sig) };
+    const card = this.card(sub);
     const host = hostOf(model.url);
     const pageKind = this.assessCache?.out.pageKind ?? 'other';
     if (memoryKey && this.deps.memory && this.deps.getConfig().memory.enabled) {
       const hit = this.deps.memory.lookup(host, pageKind, memoryKey);
-      const el = hit ? [...model.elements.values()].find((e) => e.sig === hit.sig && e.visible) : undefined;
+      const el = hit ? [...model.elements.values()].find((e) => e.sig === hit.sig && e.visible && !intent.exclude!.includes(e.sig)) : undefined;
       if (hit && el) {
+        // A remembered element for a reversible step is simply tried first: the effect check confirms it.
+        if (trial) {
+          this.memoryUse = { id: hit.id, host, pageKind, key: memoryKey };
+          return { el, trial: true };
+        }
         const res = await runQuestions(this.qctx(), {
           template: 'ground.memory_confirm',
-          state: { intent: { target: intent.target }, element: describeElement(el, { pageUrl: model.url }) },
+          state: buildState({ goal: this.spec.goal, step: card, intent: { target: intent.target }, extra: { element: renderCandidate(model, el.ref) } }, this.budget()),
           questions: { same: { type: 'noul', instructions: 'Is `element` `intent.target`?' } },
         });
-        if (gateNoul(noulOf(res.answers, 'same'), this.th().ground.noul) === 'yes') {
+        // The agent or a verified step confirmed this element before: keep it unless JEV clearly disagrees.
+        if (gateNoul(noulOf(res.answers, 'same'), th.ground.noul) !== 'no') {
           this.memoryUse = { id: hit.id, host, pageKind, key: memoryKey };
           return { el };
         }
         this.deps.memory.recordFailure(hit.id);
       }
     }
-    const res = await groundByIntent(this.qctx(), model, intent, this.th(), { goal: this.spec.goal, params: this.params, hints: this.hints, budgetTokens: this.budget() });
-    if (res.decision === 'act' && res.ref) {
+    const res = await groundByIntent(this.qctx(), model, intent, th, { goal: this.spec.goal, step: card, hints: hintsFor(this.hints, card), budgetTokens: this.budget() });
+    if ((res.decision === 'act' || res.decision === 'try') && res.ref) {
       if (memoryKey) this.memoryUse = { id: null, host, pageKind, key: memoryKey, sig: model.elements.get(res.ref)!.sig };
       this.groundCalls = res.callIds;
-      return { el: model.elements.get(res.ref)!, res };
+      return { el: model.elements.get(res.ref)!, res, trial: res.decision === 'try' };
     }
     if (res.decision === 'none') return { el: null, res };
-    const th = this.th().ground.choice;
-    const answer = await this.escalate('ground', `Unsure which element is ${intent.target}.`, {
-      decision: { template: 'ground.element', asked: `Which element is ${intent.target}?`, candidates: res.candidates, confidence: res.confidence, thresholds: { act: th.act, escalate: th.escalate } },
+    const thc = th.ground.choice;
+    const triedNote = tried.length ? ` Already tried and rolled back: ${tried.map((t) => t.desc).join('; ')}.` : '';
+    const answer = await this.escalate('ground', `Unsure which element is ${intent.target}.${triedNote}`, {
+      decision: { template: 'ground.element', asked: `Which element is ${intent.target}?`, candidates: res.candidates, confidence: res.confidence, thresholds: { act: thc.act, escalate: thc.escalate } },
       answer_with: ['pick', 'none', 'hint', 'skip', 'thresholds', 'set_param', 'abort'],
     });
     if (answer.type === 'none') {
@@ -475,6 +531,32 @@ export class Task extends Emitter<TaskEvents> {
       return { el, res, answer };
     }
     return { el: null, res, answer };
+  }
+
+  /**
+   * A trial did not have the expected effect: undo it (back, Escape, restore the value, re-click a toggle), remember
+   * the element as rejected for this step and let the next iteration ground again without it.
+   */
+  private async trialFailed(sub: Subintent, el: ElementNode, before: Model, why: string): Promise<Outcome> {
+    const page = await this.page();
+    for (let i = 0; i < 3; i++) {
+      const now = await this.observe(false);
+      const [act] = rollbackPlan(before, now, el);
+      if (!act) break;
+      const cur = now.elements.get(el.ref);
+      if (act === 'back') { if (!(await page.back())) break; }
+      else if (act === 'escape') await page.press('Escape');
+      else if (act === 'restore' && cur) await page.type(cur.backendNodeId, el.value ?? '', { mode: 'insert', clear: true, sessionId: cur.frameSessionId });
+      else if (act === 'reclick' && cur) await this.click(cur);
+      await this.settle();
+    }
+    const key = label(sub);
+    this.rejected.set(key, [...(this.rejected.get(key) ?? []), { sig: el.sig, desc: `${el.ref} ${describeElement(el)}` }]);
+    if ('key' in sub && this.status[sub.key] === 'typed') this.status[sub.key] = 'pending';
+    this.lastTypedKey = null;
+    this.settleGrounding(false);
+    this.trialRolledBack = true;
+    return { outcome: 'retry', note: `tried ${el.ref} "${el.name}" for ${key}: ${why}; rolled back` };
   }
 
   private memoryUse: { id: string | null; host: string; pageKind: string; key: string; sig?: string } | null = null;
@@ -562,6 +644,12 @@ export class Task extends Emitter<TaskEvents> {
       out = { outcome: 'failed', note: `${subLabel} failed: ${err.message}${err.detail ? ` (${err.detail})` : ''}` };
     }
     timings.execute = this.now() - t2;
+    if (this.trialRolledBack) {
+      // The page is back where it was, but one candidate fewer remains: that is progress, not a loop.
+      this.trialRolledBack = false;
+      this.seen.set(loopKey, Math.max(0, seen - 1));
+    }
+    if (out.outcome === 'ok') this.rejected.delete(subLabel);
     if (out.outcome === 'failed') {
       const n = (this.failures.get(subLabel) ?? 0) + 1;
       this.failures.set(subLabel, n);
@@ -595,7 +683,7 @@ export class Task extends Emitter<TaskEvents> {
     ];
     const allDone = Object.values(this.status).every((s) => s !== 'pending' && s !== 'typed');
     const input = {
-      model, goal: this.spec.goal, params: this.params, progress: this.status, hints: this.hints,
+      model, goal: this.spec.goal, params: this.params, progress: this.status, hints: hintsFor(this.hints),
       uncertainParams: Object.keys(this.status).filter((k) => this.status[k] === 'typed' && !this.params[k].secret),
       overlays, requiredEmpty: allDone ? requiredEmptyFields(model) : [], hasResultSchema: !!this.spec.result, budgetTokens: this.budget(),
     };
@@ -724,7 +812,7 @@ export class Task extends Emitter<TaskEvents> {
     options.push({ id: 'go_back', description: 'Go back to the previous page.' });
     options.push({ id: 'wait', description: 'Wait for the page to finish loading or updating.' });
     if (!this.spec.result) options.push({ id: 'done', description: 'The goal is already achieved; stop.' });
-    const res = await runQuestions(this.qctx(), buildDecide({ model, goal: this.spec.goal, params: this.params, progress: this.status, hints: this.hints, recent: this.recent, options, budgetTokens: this.budget() }));
+    const res = await runQuestions(this.qctx(), buildDecide({ model, goal: this.spec.goal, params: this.params, progress: this.status, hints: hintsFor(this.hints), recent: this.recent, options, budgetTokens: this.budget() }));
     const choice = readDecide(res.answers);
     let pick = choice.choice;
     if (gateChoice(choice, this.th().subintent.choice) !== 'act') {
@@ -825,8 +913,9 @@ export class Task extends Emitter<TaskEvents> {
     const what = sub.overlayKind === 'cookie_consent' ? 'the button that accepts the cookie notice (or closes it)'
       : sub.overlayKind === 'login_wall' ? 'the button that closes the sign-in prompt without signing in'
       : `the button that closes or dismisses this ${sub.overlayKind === 'promo' ? 'promotion' : 'overlay'} without signing up or buying`;
-    const g = await this.ground(sub, { target: `${what}${region?.label ? ` ("${region.label}")` : ''}`, kinds: ['button', 'link', 'clickable', 'menuitem'], regionId: sub.region, action: 'click' }, `dismiss:${sub.overlayKind}`);
+    const g = await this.ground(sub, { target: `${what}${region?.label ? ` ("${region.label}")` : ''}`, kinds: ['button', 'link', 'clickable', 'menuitem'], regionId: sub.region, action: 'click', trial: true }, `dismiss:${sub.overlayKind}`);
     const page = await this.page();
+    const before = this.model!;
     if (!g.el) {
       if (g.answer?.type === 'skip') return { outcome: 'skipped', note: 'overlay left in place (agent said skip)' };
       await page.press('Escape');
@@ -845,6 +934,10 @@ export class Task extends Emitter<TaskEvents> {
     await this.settle();
     const after = await this.observe(false);
     const ok = !after.regions.some((r) => r.id === sub.region && (r.blocking || this.regionVisible(after, r)));
+    if (!ok && g.trial) {
+      if (region) this.dismissed.delete(region.sig);
+      return this.trialFailed(sub, g.el, before, 'the overlay is still there');
+    }
     this.settleGrounding(ok);
     return { outcome: ok ? 'ok' : 'failed', note: `${ok ? 'dismissed' : 'tried to dismiss'} ${sub.overlayKind} overlay via ${g.el.ref} "${g.el.name}"`, action: { type: 'click', ref: g.el.ref } };
   }
@@ -854,25 +947,28 @@ export class Task extends Emitter<TaskEvents> {
     const p = this.params[k];
     const about = p.about ?? k.replace(/_/g, ' ');
     const kind = paramKind(p);
-    const kinds: Intent['kinds'] = kind === 'boolean' ? ['checkbox', 'radio'] : ['textbox', 'combobox', 'select', 'clickable', 'button'];
-    const g = await this.ground(sub, {
-      target: kind === 'boolean' ? `the checkbox or switch for "${about}"` : `the input field, or the dropdown/selector, for the ${about}`,
-      action: kind === 'boolean' ? 'check' : 'type', kinds,
-    }, `param:${k}`);
+    const g = await this.ground(sub, paramIntent(k, p), `param:${k}`);
     if (!g.el) {
       if (g.answer?.type === 'skip') { this.status[k] = 'skipped'; return { outcome: 'skipped', note: `skipped param ${k}` }; }
       if (g.res?.decision === 'none') { this.absentOn[k] = model.signature; return { outcome: 'skipped', note: `no field for ${k} on this page` }; }
       return { outcome: 'retry', note: `no field chosen for ${k}` };
     }
     const el = g.el;
+    const before = this.model!;
+    const trial = !!g.trial;
     this.paramRefs[k] = el.ref;
     const page = await this.page();
     if (kind === 'boolean') {
       const want = p.value === true;
-      if ((el.states.checked === true) !== want) await this.click(el);
+      const on = (e: ElementNode) => (e.states.checked ?? e.states.selected ?? false) === true;
+      if (on(el) !== want) await this.click(el);
+      await this.settle();
+      if (trial) {
+        const cur = (await this.observe(false)).elements.get(el.ref);
+        if (!cur || on(cur) !== want) return this.trialFailed(sub, el, before, 'the switch did not change');
+      }
       this.status[k] = 'done';
       this.dirty = true;
-      await this.settle();
       this.settleGrounding(true);
       return { outcome: 'ok', note: `${want ? 'checked' : 'unchecked'} ${el.ref} "${el.name}" for ${k}`, action: { type: 'check', ref: el.ref, value: want } };
     }
@@ -880,6 +976,7 @@ export class Task extends Emitter<TaskEvents> {
       const opts = el.options ?? [];
       const res = await runQuestions(this.qctx(), buildOptionPick(opts, this.params, k, this.budget()));
       const pick = choiceOf(res.answers, 'pick');
+      if (pick.choice === 'none' && trial) return this.trialFailed(sub, el, before, `none of its options matches "${String(p.value)}"`);
       if (pick.choice === 'none' || gateChoice(pick, this.th().ground.choice) === 'escalate') {
         const ans = await this.escalate('ground', `Unsure which option of ${describeElement(el)} matches ${k}.`, {
           decision: { template: 'widget.option_pick', asked: `Which option matches params.${k}?`, confidence: pick.confidence,
@@ -897,7 +994,7 @@ export class Task extends Emitter<TaskEvents> {
       this.settleGrounding(true);
       return { outcome: 'ok', note: `selected ${k} in ${el.ref} "${el.name}"`, action: { type: 'select', ref: el.ref } };
     }
-    if (el.kind === 'clickable' || el.kind === 'button') return this.pickFromDropdown(k, el, model);
+    if (el.kind === 'clickable' || el.kind === 'button') return this.pickFromDropdown(sub, el, before, trial);
     if (fieldHoldsValue(el, p)) {
       this.status[k] = 'done';
       return { outcome: 'ok', note: `${k} already filled in ${el.ref}` };
@@ -911,6 +1008,7 @@ export class Task extends Emitter<TaskEvents> {
     this.status[k] = 'typed';
     this.lastTypedKey = k;
     const typedOk = p.secret || fieldHoldsValue(field, p) || !!field?.value;
+    if (!typedOk && trial) return this.trialFailed(sub, el, before, 'the field did not take the value');
     this.settleGrounding(typedOk);
     const note = `typed ${p.secret ? '[secret]' : `"${value}"`} into ${el.ref} "${el.name}" for ${k}`;
     if (this.popupOptions(after, field).length) {
@@ -924,7 +1022,8 @@ export class Task extends Emitter<TaskEvents> {
   }
 
   /** Custom dropdowns (div-based selects, multi-select checkboxes): open, pick the option matching the value, close. */
-  private async pickFromDropdown(k: string, trigger: ElementNode, model: Model): Promise<Outcome> {
+  private async pickFromDropdown(sub: Extract<Subintent, { type: 'fill_param' }>, trigger: ElementNode, model: Model, trial: boolean): Promise<Outcome> {
+    const k = sub.key;
     const p = this.params[k];
     const want = normalizeText(String(p.value));
     const label = normalizeText(trigger.name);
@@ -933,6 +1032,7 @@ export class Task extends Emitter<TaskEvents> {
       if (!trigger.states.selected && !trigger.states.checked) {
         await this.click(trigger);
         await this.settle();
+        if (trial && !hadEffect(model, await this.observe(false), trigger)) return this.trialFailed(sub, trigger, model, 'pressing it changed nothing');
       }
       this.status[k] = 'done';
       this.dirty = true;
@@ -947,10 +1047,19 @@ export class Task extends Emitter<TaskEvents> {
     await this.settle();
     const opened = await this.observe(false);
     const options = this.revealedOptions(model, opened, opened.elements.get(trigger.ref) ?? trigger).slice(0, 60);
-    if (!options.length) return { outcome: 'failed', note: `clicked ${trigger.ref} "${trigger.name}" but no options appeared` };
+    if (!options.length) {
+      if (trial) return this.trialFailed(sub, trigger, model, 'no options appeared');
+      return { outcome: 'failed', note: `clicked ${trigger.ref} "${trigger.name}" but no options appeared` };
+    }
     const res = await runQuestions(this.qctx(), buildSuggestionPick(opened, options.map((o) => o.ref), this.params, k, this.budget()));
     const pick = choiceOf(res.answers, 'pick');
     let ref = pick.choice;
+    if (ref === 'none' && trial) {
+      // Wrong list (a city list for a brand): close it and try the next control.
+      await (await this.page()).press('Escape');
+      await this.settle();
+      return this.trialFailed(sub, trigger, model, `its options do not include "${String(p.value)}"`);
+    }
     if (ref === 'none' || gateChoice(pick, this.th().ground.choice) !== 'act') {
       const ans = await this.escalate('ground', `Unsure which option of "${trigger.name}" matches ${k} = "${String(p.value)}".`, {
         decision: { template: 'widget.suggestion_pick', asked: `Which option matches params.${k}?`, confidence: pick.confidence,
@@ -1031,7 +1140,7 @@ export class Task extends Emitter<TaskEvents> {
     // Only an open picker counts before we click the date field (pages also list prices by date elsewhere).
     let cells = this.popupCalendar(current);
     if (cells.length < 7) {
-      const g = await this.ground(sub, { target: `the field or button that opens the date picker for the ${about}`, kinds: ['textbox', 'combobox', 'button', 'clickable', 'link'], action: 'click' }, `date:${k}`);
+      const g = await this.ground(sub, { target: `the field or button that opens the date picker for the ${about}`, kinds: ['textbox', 'combobox', 'button', 'clickable', 'link'], action: 'click', trial: true }, `date:${k}`);
       if (!g.el) {
         if (g.res?.decision === 'none') { this.absentOn[k] = model.signature; return { outcome: 'skipped', note: `no date field for ${k}` }; }
         return { outcome: 'retry', note: `no date field chosen for ${k}` };
@@ -1042,10 +1151,12 @@ export class Task extends Emitter<TaskEvents> {
         this.settleGrounding(true);
         return { outcome: 'ok', note: `typed ${range.from} into date input ${g.el.ref}`, action: { type: 'type', ref: g.el.ref } };
       }
+      const before = this.model!;
       await this.click(g.el);
       await this.settle();
       current = await this.observe(false);
       cells = parseCalendarCells(current, this.refDate());
+      if (cells.length < 7 && g.trial) return this.trialFailed(sub, g.el, before, 'no calendar appeared');
       this.settleGrounding(cells.length >= 7);
       if (cells.length < 7) return { outcome: 'failed', note: `clicked ${g.el.ref} "${g.el.name}" but no calendar appeared` };
     }
@@ -1129,12 +1240,21 @@ export class Task extends Emitter<TaskEvents> {
     this.revealTried.add(k);
     const about = this.params[k].about ?? k.replace(/_/g, ' ');
     const g = await this.ground(sub, {
-      target: `the button, link or tab that shows more search filters (such as advanced search or "more filters") where a field for the ${about} may be`,
-      kinds: ['button', 'link', 'clickable', 'tab'], action: 'click',
+      target: `the button, link or tab that shows more search filters (such as advanced search or "more filters") where the ${about} can be set`,
+      kinds: ['button', 'link', 'clickable', 'tab'], action: 'click', trial: true,
     }, `reveal:${k}`);
     if (!g.el) return { outcome: 'skipped', note: `no control reveals a field for ${k}; continuing without it` };
+    const before = this.model!;
     await this.click(g.el);
     await this.settle();
+    if (g.trial) {
+      const after = await this.observe(false);
+      const added = diffModels(before, after).added.filter((r) => after.elements.get(r)?.interactive && after.elements.get(r)?.visible).length;
+      if (after.url === before.url && added < 2) {
+        this.revealTried.delete(k);
+        return this.trialFailed(sub, g.el, before, 'no new filters appeared');
+      }
+    }
     delete this.absentOn[k];
     this.settleGrounding(true);
     return { outcome: 'ok', note: `opened ${g.el.ref} "${g.el.name}" to look for the ${about} field`, action: { type: 'click', ref: g.el.ref } };
@@ -1144,21 +1264,21 @@ export class Task extends Emitter<TaskEvents> {
   private async applySort(sub: Extract<Subintent, { type: 'apply_sort' }>, model: Model): Promise<Outcome> {
     this.sortTried = true;
     const select = this.spec.result!.select!;
-    const m = select.match(/^(min|max)\((\w+)\)$/)!;
-    const fieldSpec = this.spec.result!.schema[m[2]];
-    const about = (typeof fieldSpec === 'object' && fieldSpec.about) || m[2].replace(/_/g, ' ');
-    const order = m[1] === 'min' ? `by ${about}, lowest first (ascending, cheapest first)` : `by ${about}, highest first (descending)`;
+    const order = this.sortOrder();
     const g = await this.ground(sub, {
       target: `the control that sorts the result list ${order}, or the sort menu that offers this order`,
-      kinds: ['select', 'combobox', 'button', 'link', 'tab', 'clickable', 'option', 'radio'], action: 'click',
+      kinds: ['select', 'combobox', 'button', 'link', 'tab', 'clickable', 'option', 'radio'], action: 'click', trial: true,
     }, `sort:${select}`);
     if (!g.el) return { outcome: 'skipped', note: 'no sort control found; reading results as listed' };
     const page = await this.page();
-    const before = model.url;
+    const start = this.model!;
+    const before = start.url;
+    const failTrial = (why: string) => { this.sortTried = false; return this.trialFailed(sub, g.el!, start, why); };
     if (g.el.kind === 'select') {
       const opts = g.el.options ?? [];
       const res = await runQuestions(this.qctx(), buildOptionPick(opts, { sort: { value: `sort ${order}`, about: 'sort order' } }, 'sort', this.budget()));
       const pick = choiceOf(res.answers, 'pick');
+      if (pick.choice === 'none' && g.trial) return failTrial('none of its options sorts that way');
       if (pick.choice === 'none' || gateChoice(pick, this.th().ground.choice) === 'escalate') return { outcome: 'skipped', note: 'no matching sort option' };
       await page.selectOption(g.el.backendNodeId, opts[Number(pick.choice.slice(1))].value, g.el.frameSessionId);
     } else {
@@ -1170,10 +1290,15 @@ export class Task extends Emitter<TaskEvents> {
         const restricted = new Set(options.map((o) => o.ref));
         const view = { ...opened, elements: new Map([...opened.elements].filter(([r]) => restricted.has(r))) } as Model;
         const res = await groundByIntent(this.qctx(), view, { target: `the option that sorts ${order}`, kinds: ['option', 'menuitem', 'link', 'button', 'clickable', 'radio'], action: 'click' },
-          this.th(), { goal: this.spec.goal, budgetTokens: this.budget() });
-        if (res.decision !== 'act' || !res.ref) return { outcome: 'skipped', note: 'sort menu opened but no matching order' };
+          this.th(), { goal: this.spec.goal, step: this.card(sub), budgetTokens: this.budget() });
+        if (res.decision !== 'act' || !res.ref) {
+          if (g.trial && res.decision === 'none') return failTrial('its menu has no such order');
+          return { outcome: 'skipped', note: 'sort menu opened but no matching order' };
+        }
         const opt = opened.elements.get(res.ref)!;
         await this.click(opt);
+      } else if (g.trial && !hadEffect(start, opened, g.el)) {
+        return failTrial('clicking it changed nothing');
       }
     }
     await this.settle();

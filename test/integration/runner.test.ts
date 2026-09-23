@@ -33,6 +33,8 @@ interface Script {
   pageKind: (req: EvaluateRequest) => string;
   /** [intent target pattern, element description pattern, confidence] */
   targets: Array<[RegExp, RegExp, number?]>;
+  /** [intent target pattern, [element pattern, probability][]]: a spread answer (checked before `targets`). */
+  ranks?: Array<[RegExp, Array<[RegExp, number]>]>;
   goalReached?: (req: EvaluateRequest) => number;
   actionClass?: string;
 }
@@ -49,8 +51,28 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
       } else if (id === 'pick' && q.type === 'choice') {
         const target = String(state.intent?.target ?? JSON.stringify(state.params ?? {}));
         const pool = { ...(state.page?.elements ?? {}), ...(state.candidates ?? {}), ...(state.options ?? {}) } as Record<string, string>;
-        const rule = s.targets.find(([t]) => t.test(target));
         const keys = Object.keys(q.criteria).filter((k) => k !== 'none');
+        const rank = s.ranks?.find(([t]) => t.test(target));
+        if (rank) {
+          const probs: Record<string, number> = {};
+          let used = 0;
+          for (const k of keys) {
+            const m = rank[1].find(([re]) => re.test((pool[k] ?? '').split('\n')[0]));
+            if (m) { probs[k] = m[1]; used += m[1]; }
+          }
+          if (!used) {
+            out[id] = { type: 'choice', choice: 'none', probabilities: { none: 0.9, ...Object.fromEntries(keys.map((k) => [k, 0.1 / keys.length])) }, confidence: 0.9 };
+            continue;
+          }
+          const rest = keys.filter((k) => !(k in probs));
+          const share = (1 - used) / (rest.length + 1);
+          for (const k of rest) probs[k] = share;
+          probs.none = share;
+          const [best, p] = Object.entries(probs).sort((a, b) => b[1] - a[1])[0];
+          out[id] = { type: 'choice', choice: best, probabilities: probs, confidence: p };
+          continue;
+        }
+        const rule = s.targets.find(([t]) => t.test(target));
         const hit = rule ? keys.find((k) => rule[2] !== undefined || true ? rule[1].test(pool[k] ?? '') : false) : undefined;
         const conf = rule?.[2] ?? 0.95;
         if (hit) {
@@ -116,7 +138,10 @@ describe('Task runner (scripted JEV, real browser)', () => {
       targets: [[/email/i, /Email address/, 0.3], [/password/i, /Password/], [/submit/i, /Sign in/]],
       goalReached: (req) => (JSON.stringify(req.state).includes('Welcome back') ? 0.95 : 0.05),
     });
-    const task = makeTask({ goal: 'Sign in', params: { email: { value: 'bob@example.com', about: 'account email' }, password: { value: 'pw12345', secret: true } } }, page, jev);
+    const task = makeTask({
+      goal: 'Sign in', params: { email: { value: 'bob@example.com', about: 'account email' }, password: { value: 'pw12345', secret: true } },
+      policy: { confidence: { trial: { enabled: false } } },
+    }, page, jev);
     const questions: any[] = [];
     task.on('escalation', (q) => {
       questions.push(q);
@@ -128,6 +153,44 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(questions[0].decision.candidates.length).toBeGreaterThan(0);
     expect(task.state).toBe('done');
     expect(await page.evaluate('document.getElementById("email").value')).toBe('bob@example.com');
+  });
+
+  it('tries a low-confidence leader for a reversible step instead of asking', async () => {
+    const page = await h.open('login.html');
+    const jev = scripted({
+      pageKind: () => 'login',
+      targets: [[/email/i, /Email address/, 0.3], [/password/i, /Password/], [/submit/i, /Sign in/]],
+      goalReached: (req) => (JSON.stringify(req.state).includes('Welcome back') ? 0.95 : 0.05),
+    });
+    const task = makeTask({ goal: 'Sign in', params: { email: { value: 'bob@example.com', about: 'account email' }, password: { value: 'pw12345', secret: true } } }, page, jev);
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); task.answer(q.question_id, { type: 'abort' }); });
+    await task.start();
+    expect(questions).toEqual([]);
+    expect(task.state).toBe('done');
+    expect(await page.evaluate('document.getElementById("email").value')).toBe('bob@example.com');
+  });
+
+  it('rolls back a failed trial and tries the next candidate', async () => {
+    const page = await h.open('filters.html');
+    const jev = scripted({
+      pageKind: () => 'search_form',
+      targets: [],
+      // The city opener leads for the brand, the Toyota chip is second: the city list lacks Toyota, so the trial fails.
+      ranks: [[/car brand/i, [[/"Где искать"/, 0.35], [/"Toyota"/, 0.3]]]],
+      goalReached: (req) => (JSON.stringify(req.state).includes('Выбрано: Toyota') ? 0.95 : 0.05),
+    });
+    const task = makeTask({ goal: 'Show Toyota cars', params: { brand: { value: 'Toyota', about: 'car brand' } } }, page, jev);
+    const questions: any[] = [];
+    const steps: string[] = [];
+    task.on('escalation', (q) => { questions.push(q); task.answer(q.question_id, { type: 'abort' }); });
+    task.on('step', (st) => steps.push(st.note));
+    await task.start();
+    expect(questions).toEqual([]);
+    expect(task.state).toBe('done');
+    expect(steps.some((n) => /Где искать.*rolled back/.test(n))).toBe(true);
+    expect(await page.evaluate('document.querySelector(".popup") === null')).toBe(true);
+    expect(await page.evaluate('[...document.querySelectorAll("button[aria-pressed=true]")].map((b) => b.textContent).join()')).toBe('Toyota');
   });
 
   it('asks for confirmation before an irreversible click even when JEV calls it harmless', async () => {

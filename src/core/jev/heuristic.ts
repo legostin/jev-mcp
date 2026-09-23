@@ -24,7 +24,7 @@ function overlap(a: string[], b: string[]): number {
 export function createHeuristicClient() {
   return createScriptedClient((req: EvaluateRequest) => {
     const s = req.state as Record<string, any>;
-    const focusText = [s?.intent?.target, s?.intent?.param_value, JSON.stringify(s?.params ?? {})].filter(Boolean).join(' ');
+    const focusText = [s?.intent?.target, s?.intent?.param_value, JSON.stringify(s?.step ?? {}), JSON.stringify(s?.params ?? {})].filter(Boolean).join(' ');
     const focus = tokens(focusText);
     const out: Record<string, Answer> = {};
     for (const [id, q] of Object.entries(req.questions)) {

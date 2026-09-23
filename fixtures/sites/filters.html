@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Колёса — продажа автомобилей</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; color: #222; }
+  header { height: 56px; background: #f3f3f3; display: flex; gap: 20px; align-items: center; padding: 0 16px; }
+  header a { color: #222; text-decoration: none; }
+  main { padding: 16px; max-width: 980px; }
+  form.search { padding: 16px; border: 1px solid #ddd; border-radius: 12px; }
+  .filter-row { display: flex; gap: 8px; margin: 8px 0; align-items: center; flex-wrap: wrap; }
+  .filter-button { padding: 12px 18px; border: 1px solid #ccc; border-radius: 10px; background: #fff; cursor: pointer; font-size: 15px; }
+  .filter-button.opener::after { content: ' ▾'; }
+  .filter-button[aria-pressed="true"] { background: #1f7ae0; color: #fff; border-color: #1f7ae0; }
+  .price input { width: 120px; padding: 10px; font-size: 15px; }
+  .popup { position: absolute; background: #fff; border: 1px solid #999; box-shadow: 0 4px 16px rgba(0,0,0,.2); padding: 8px; z-index: 10; width: 280px; max-height: 360px; overflow: auto; }
+  .popup .search-box { width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 6px; }
+  .popup .opt { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; background: none; cursor: pointer; font-size: 15px; }
+  .popup .opt:hover { background: #eef4ff; }
+  #submit { margin-top: 12px; padding: 14px 24px; background: #1f7ae0; color: #fff; border: 0; border-radius: 10px; font-size: 16px; cursor: pointer; }
+  .sort { margin: 16px 0; position: relative; }
+  .sort-trigger { color: #1f7ae0; cursor: pointer; border-bottom: 1px dashed #1f7ae0; }
+  .a-card { border-bottom: 1px solid #e5e5e5; padding: 12px 0; display: flex; gap: 16px; align-items: baseline; }
+  .a-card__price { font-weight: 600; min-width: 140px; }
+  footer { margin-top: 40px; padding: 16px; background: #f3f3f3; }
+</style>
+</head>
+<body>
+<header>
+  <a href="#">Колёса</a><a href="#">Легковые</a><a href="#">Новые авто</a><a href="#">Мототехника</a><a href="#">Дилеры</a>
+</header>
+<main>
+  <h1>Купить автомобиль в Казахстане</h1>
+  <form class="search" id="search" onsubmit="return false">
+    <div class="filter-row" data-field="city"></div>
+    <div class="filter-row" data-field="brand"></div>
+    <div class="filter-row" data-field="model" hidden></div>
+    <div class="filter-row price">
+      <label for="price_from">Цена</label>
+      <input id="price_from" name="price_from" placeholder="от" inputmode="numeric">
+      <input id="price_to" name="price_to" placeholder="до" inputmode="numeric">
+    </div>
+    <p id="chosen"></p>
+    <button type="submit" id="submit">Показать <span id="count">760</span> объявлений</button>
+  </form>
+  <section id="results" hidden>
+    <h2>Результаты поиска</h2>
+    <div class="sort">Сортировать по: <span class="sort-trigger" role="button" tabindex="0" id="sort-trigger">дате объявления</span></div>
+    <div id="list"></div>
+  </section>
+</main>
+<footer>© Колёса. <a href="#">Правила</a> · <a href="#">Помощь</a></footer>
+<script>
+const DATA = {
+  city: { opener: 'Где искать', chips: ['Алматы', 'Астана', 'Шымкент', 'Павлодар'], all: ['Алматы', 'Астана', 'Шымкент', 'Павлодар', 'Караганда', 'Актобе', 'Костанай', 'Атырау', 'Семей', 'Усть-Каменогорск'] },
+  brand: { opener: 'Марка', chips: ['Toyota', 'Hyundai', 'Kia', 'ВАЗ (Lada)'], all: ['Toyota', 'Hyundai', 'Kia', 'ВАЗ (Lada)', 'Mercedes-Benz', 'BMW', 'Volkswagen', 'Lexus', 'Nissan', 'Chevrolet'] },
+};
+const MODELS = {
+  Toyota: ['Camry', 'Land Cruiser Prado', 'Land Cruiser', 'RAV4', 'Corolla', 'Highlander'],
+  Hyundai: ['Accent', 'Elantra', 'Sonata', 'Tucson', 'Santa Fe'],
+  Kia: ['Rio', 'Cerato', 'K5', 'Sportage', 'Sorento'],
+  'ВАЗ (Lada)': ['Granta', 'Vesta', 'Niva', '2107'],
+  'Mercedes-Benz': ['E 200', 'S 500', 'GLE'], BMW: ['X5', '520', '320'], Volkswagen: ['Polo', 'Passat', 'Tiguan'],
+  Lexus: ['RX 350', 'LX 570', 'ES 250'], Nissan: ['Almera', 'X-Trail', 'Qashqai'], Chevrolet: ['Cobalt', 'Nexia', 'Malibu'],
+};
+const state = { city: null, brand: null, model: null, sort: 'date' };
+let popup = null;
+
+function rand(seed) { let h = 2166136261; for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 100000) / 100000; }
+function fieldData(field) { return field === 'model' ? { opener: 'Модель', chips: (MODELS[state.brand] || []).slice(0, 4), all: MODELS[state.brand] || [] } : DATA[field]; }
+
+function renderRow(field) {
+  const row = document.querySelector(`.filter-row[data-field="${field}"]`);
+  const d = fieldData(field);
+  row.innerHTML = '';
+  const opener = document.createElement('button');
+  opener.type = 'button'; opener.className = 'filter-button opener';
+  opener.textContent = state[field] && !d.chips.includes(state[field]) ? state[field] : d.opener;
+  opener.setAttribute('aria-expanded', popup && popup.dataset.field === field ? 'true' : 'false');
+  opener.onclick = (e) => { e.stopPropagation(); openPopup(field, opener); };
+  row.appendChild(opener);
+  for (const v of d.chips) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'filter-button'; b.textContent = v;
+    b.setAttribute('aria-pressed', state[field] === v ? 'true' : 'false');
+    b.onclick = () => setValue(field, state[field] === v ? null : v);
+    row.appendChild(b);
+  }
+  const more = document.createElement('button');
+  more.type = 'button'; more.className = 'filter-button'; more.textContent = 'ещё';
+  more.onclick = (e) => { e.stopPropagation(); openPopup(field, more); };
+  row.appendChild(more);
+}
+
+function setValue(field, v) {
+  state[field] = v;
+  if (field === 'brand') state.model = null;
+  closePopup();
+  render();
+}
+
+function openPopup(field, anchor) {
+  closePopup();
+  const d = fieldData(field);
+  popup = document.createElement('div');
+  popup.className = 'popup'; popup.dataset.field = field; popup.setAttribute('role', 'listbox');
+  const r = anchor.getBoundingClientRect();
+  popup.style.left = `${r.left + scrollX}px`; popup.style.top = `${r.bottom + scrollY + 4}px`;
+  const search = document.createElement('input');
+  search.className = 'search-box'; search.placeholder = 'Поиск';
+  popup.appendChild(search);
+  const list = document.createElement('div');
+  popup.appendChild(list);
+  const fill = () => {
+    list.innerHTML = '';
+    for (const v of d.all.filter((x) => x.toLowerCase().includes(search.value.toLowerCase()))) {
+      const o = document.createElement('button');
+      o.type = 'button'; o.className = 'opt'; o.setAttribute('role', 'option'); o.textContent = v;
+      o.onclick = (e) => { e.stopPropagation(); setValue(field, v); };
+      list.appendChild(o);
+    }
+  };
+  search.oninput = fill;
+  fill();
+  popup.onclick = (e) => e.stopPropagation();
+  document.body.appendChild(popup);
+  renderRow(field);
+}
+
+function closePopup() {
+  if (!popup) return;
+  const field = popup.dataset.field;
+  popup.remove(); popup = null;
+  if (field !== 'sort') renderRow(field);
+}
+
+function count() { return state.city || state.brand ? 20 + Math.round(rand(`${state.city}${state.brand}${state.model}`) * 400) : 760; }
+
+function render() {
+  renderRow('city'); renderRow('brand');
+  const modelRow = document.querySelector('.filter-row[data-field="model"]');
+  modelRow.hidden = !state.brand;
+  if (state.brand) renderRow('model');
+  const chosen = [state.city, state.brand, state.model].filter(Boolean);
+  document.getElementById('chosen').textContent = chosen.length ? `Выбрано: ${chosen.join(', ')}` : '';
+  document.getElementById('count').textContent = String(count());
+}
+
+function listings() {
+  const seed = `${state.city}|${state.brand}|${state.model}`;
+  const items = Array.from({ length: 20 }, (_, i) => {
+    const brand = state.brand || DATA.brand.all[i % DATA.brand.all.length];
+    const model = state.model || (MODELS[brand] || ['—'])[i % (MODELS[brand] || ['—']).length];
+    return {
+      id: 228599100 + Math.round(rand(`${seed}id${i}`) * 90000), title: `${brand} ${model}`, year: 1993 + Math.floor(rand(`${seed}y${i}`) * 32),
+      price: 900000 + Math.round(rand(`${seed}p${i}`) * 60) * 250000, city: state.city || DATA.city.all[i % DATA.city.all.length], order: i,
+    };
+  });
+  // The known cheapest listing sits in the middle of the default (date) ordering.
+  items[7].price = 700000; items[7].year = 1995;
+  return items;
+}
+
+const SORTS = { date: 'дате объявления', 'price-asc': 'цене, сначала дешевые', 'price-desc': 'цене, сначала дорогие', year: 'году выпуска' };
+
+function renderResults() {
+  const items = listings();
+  if (state.sort === 'price-asc') items.sort((a, b) => a.price - b.price);
+  if (state.sort === 'price-desc') items.sort((a, b) => b.price - a.price);
+  if (state.sort === 'year') items.sort((a, b) => b.year - a.year);
+  const fmt = (n) => n.toLocaleString('ru-RU').replace(/ /g, ' ');
+  document.getElementById('list').innerHTML = items.map((it) => `
+    <article class="a-card">
+      <a class="a-card__link" href="/a/show/${it.id}">${it.title}</a>
+      <span class="a-card__price">${fmt(it.price)} ₸</span>
+      <span class="a-card__year">${it.year} г.</span>
+      <span class="a-card__city">${it.city}</span>
+    </article>`).join('');
+  document.getElementById('sort-trigger').textContent = SORTS[state.sort];
+  document.getElementById('results').hidden = false;
+}
+
+function query() {
+  const p = new URLSearchParams();
+  if (state.city) p.set('city', state.city);
+  if (state.brand) p.set('brand', state.brand);
+  if (state.model) p.set('model', state.model);
+  if (state.sort !== 'date') p.set('sort_by', state.sort);
+  return `?${p}`;
+}
+
+document.getElementById('search').addEventListener('submit', () => {
+  closePopup();
+  history.pushState(null, '', query());
+  renderResults();
+});
+
+document.getElementById('sort-trigger').addEventListener('click', (e) => {
+  e.stopPropagation();
+  closePopup();
+  popup = document.createElement('div');
+  popup.className = 'popup'; popup.dataset.field = 'sort'; popup.setAttribute('role', 'menu');
+  const r = e.target.getBoundingClientRect();
+  popup.style.left = `${r.left + scrollX}px`; popup.style.top = `${r.bottom + scrollY + 4}px`;
+  for (const [k, label] of Object.entries(SORTS)) {
+    const o = document.createElement('button');
+    o.type = 'button'; o.className = 'opt'; o.setAttribute('role', 'menuitem'); o.textContent = label;
+    o.onclick = (ev) => { ev.stopPropagation(); state.sort = k; popup.remove(); popup = null; history.pushState(null, '', query()); renderResults(); };
+    popup.appendChild(o);
+  }
+  document.body.appendChild(popup);
+});
+
+document.addEventListener('click', () => closePopup());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePopup(); });
+render();
+</script>
+</body>
+</html>
