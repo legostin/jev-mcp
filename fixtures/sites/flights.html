@@ -130,6 +130,9 @@ $('.swap').addEventListener('click', () => {
 });
 
 // Calendar with the cheapest fare per day, like the low-fare calendars of flight search sites.
+// ?oneway=1: the picker stays open after a date (it waits for a return date) until "one way" is confirmed.
+// ?lazy=1: fares from the 12th on arrive a moment after the calendar opens.
+const QS = new URLSearchParams(location.search);
 async function renderCalendar(host) {
   closePopup();
   const box = document.createElement('div');
@@ -138,7 +141,7 @@ async function renderCalendar(host) {
   box.innerHTML = `<header><button type="button" class="prev" aria-label="Предыдущий месяц">‹</button>
     <strong class="title">${MONTHS_NOM[m - 1]} ${y}</strong>
     <button type="button" class="next" aria-label="Следующий месяц">›</button></header>
-    <div class="grid"></div>`;
+    <div class="grid"></div>${QS.get('oneway') === '1' ? '<button type="button" class="oneway">Выбрать в одну сторону</button>' : ''}`;
   host.appendChild(box); openPopup = box;
   const from = $('#origin').dataset.code, to = $('#dst-9f2c1a').dataset.code;
   const prices = from && to ? await (await fetch(`/api/calendar?from=${from}&to=${to}&month=${state.month}`)).json() : {};
@@ -153,15 +156,20 @@ async function renderCalendar(host) {
     b.setAttribute('aria-label', `${d} ${MONTHS[m - 1]} ${y}`);
     b.dataset.date = iso;
     const p = prices[iso];
-    b.innerHTML = `${d}${p ? `<span class="p">${p.toLocaleString('ru-RU').replace(/ /g, ' ')}</span>` : ''}`;
+    const fare = p ? `<span class="p">${p.toLocaleString('ru-RU').replace(/ /g, ' ')}</span>` : '';
+    const late = QS.get('lazy') === '1' && d >= 12;
+    b.innerHTML = `${d}${late ? '' : fare}`;
+    if (late && fare) setTimeout(() => { if (b.isConnected) b.insertAdjacentHTML('beforeend', fare); }, 900);
     if (iso < '2026-09-23') b.disabled = true;
-    b.addEventListener('click', () => {
+    b.addEventListener('click', (e) => {
       state.date = iso;
       $('#date-val').textContent = `${d} ${MONTHS[m - 1]}`;
+      if (QS.get('oneway') === '1') { e.stopPropagation(); grid.querySelectorAll('.sel').forEach((x) => x.classList.remove('sel')); b.classList.add('sel'); return; }
       closePopup();
     });
     grid.appendChild(b);
   }
+  box.querySelector('.oneway')?.addEventListener('click', (e) => { e.stopPropagation(); closePopup(); });
   box.querySelector('.prev').addEventListener('click', (e) => { e.stopPropagation(); shiftMonth(-1, host); });
   box.querySelector('.next').addEventListener('click', (e) => { e.stopPropagation(); shiftMonth(1, host); });
 }

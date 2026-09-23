@@ -91,6 +91,20 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     firstRunCalls = (await templates(created.task_id)).length;
   }, 300_000);
 
+  it('waits for late fares and confirms a picker that stays open for a return date', async () => {
+    const created = await client.call('task.create', spec(fixtures.url('flights.html?oneway=1&lazy=1')));
+    const { result, questions } = await runToEnd(created.task_id, pickTop);
+    const trace = await client.call('task.trace', { task_id: created.task_id });
+    const notes = trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ');
+    console.log(`picker run: ${notes}`);
+    expect(result.status).toBe('done');
+    // The cheapest day (the 14th) only gets its fare a moment after the calendar opens.
+    expect(notes).toMatch(/picked 2026-10-14/);
+    expect(notes).toMatch(/confirmed with "Выбрать в одну сторону"/);
+    expect(result.result.selected.price.amount).toBe(38900);
+    expect(questions).toHaveLength(0);
+  }, 300_000);
+
   it('follows results that open in a new tab', async () => {
     const created = await client.call('task.create', spec(fixtures.url('flights.html?newtab=1')));
     const { result } = await runToEnd(created.task_id, pickTop);

@@ -1302,9 +1302,18 @@ export class Task extends Emitter<TaskEvents> {
       if (cells.length < 7) return { outcome: 'failed', note: `clicked ${g.el.ref} "${g.el.name}" but no calendar appeared` };
     }
     for (let nav = 0; nav < 14; nav++) {
-      const candidates = cells.filter((c) => inRange(c.date, range) && !c.disabled);
+      let candidates = cells.filter((c) => inRange(c.date, range) && !c.disabled);
       if (candidates.length) {
         const prefs = await this.goalPrefs();
+        // Fares often arrive after the grid: while some days in range have a price and others not yet, wait a little.
+        for (let wait = 0; wait < 4 && prefs.lowestPrice >= 0.5; wait++) {
+          const missing = candidates.filter((c) => c.price === undefined).length;
+          if (!missing || missing === candidates.length) break;
+          await new Promise((r) => setTimeout(r, 600));
+          current = await this.observe(false);
+          cells = this.popupCalendar(current);
+          candidates = cells.filter((c) => inRange(c.date, range) && !c.disabled);
+        }
         const priced = candidates.filter((c) => c.price !== undefined);
         let chosen = candidates.sort((x, y) => x.date.localeCompare(y.date))[0];
         let why = 'earliest date in range';
@@ -1317,7 +1326,8 @@ export class Task extends Emitter<TaskEvents> {
         await this.settle();
         this.status[k] = 'done';
         this.dirty = true;
-        return { outcome: 'ok', note: `picked ${chosen.date} for ${k}: ${why}`, action: { type: 'click', ref: chosen.ref, date: chosen.date } };
+        const closed = await this.finishDatePicker(sub, k);
+        return { outcome: 'ok', note: `picked ${chosen.date} for ${k}: ${why}${closed}`, action: { type: 'click', ref: chosen.ref, date: chosen.date } };
       }
       const dates = cells.map((c) => c.date).sort();
       const forward = dates[dates.length - 1] < range.from;
@@ -1336,6 +1346,32 @@ export class Task extends Emitter<TaskEvents> {
       if (cells.length < 7) return { outcome: 'failed', note: 'the calendar closed while navigating months' };
     }
     return { outcome: 'failed', note: `no selectable date for ${k} within 14 months` };
+  }
+
+  /**
+   * Range pickers stay open after the first date, waiting for a return date or a confirmation. When no other date
+   * param is pending, confirm the choice with the picker's own button ("One way", "Done", "Apply"), else Escape.
+   */
+  private async finishDatePicker(sub: Subintent, key: string): Promise<string> {
+    const after = await this.observe(false);
+    const open = this.popupCalendar(after);
+    if (open.length < 7) return '';
+    const otherDate = Object.keys(this.params).some((x) => x !== key && paramKind(this.params[x]) === 'date' && this.status[x] === 'pending');
+    if (otherDate) return '';
+    const layer = this.layerRegion(after, open[0].regionId);
+    const g = await groundByIntent(this.qctx(), after, {
+      target: 'the button that confirms the chosen date as a one-way trip or finishes the date choice (such as "One way", "Done" or "Apply"), not a date or a month button',
+      kinds: ['button', 'clickable', 'link'], regionId: layer, action: 'click',
+    }, this.th(), { goal: this.spec.goal, step: this.card(sub), budgetTokens: this.budget() });
+    const btn = g.decision === 'act' && g.ref ? after.elements.get(g.ref) : undefined;
+    if (btn && !open.some((c) => c.ref === btn.ref)) {
+      await this.click(btn);
+      await this.settle();
+      if (this.popupCalendar(await this.observe(false)).length < 7) return `; confirmed with "${btn.name}"`;
+    }
+    await (await this.page()).press('Escape');
+    await this.settle();
+    return this.popupCalendar(await this.observe(false)).length < 7 ? '; closed the date picker' : '; the date picker stayed open';
   }
 
   /**
