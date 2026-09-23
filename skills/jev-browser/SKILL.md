@@ -5,22 +5,28 @@ description: Drive a real Chrome browser through JEV (TypeSafe's fast decision m
 
 # JEV Browser
 
-JEV is a *System One* model: it makes typed decisions (which element, which option, did it work) in ~100 ms for fractions of a cent,
-with calibrated confidence. It **does not write text or plan**. You plan and supply data; JEV executes and asks you when unsure.
+JEV is a *System One* model. It makes typed decisions (which element, which option, did it work) in ~100 ms for fractions of a cent, and each decision comes with calibrated confidence. It **does not write text or plan**. You plan and supply the data; JEV executes and asks you when it is unsure.
 
 ## Choose the tool
 
 | Need | Tool |
 |---|---|
-| A multi-step goal (search, book up to payment, compare, collect data) | `jev_task`, then wait for events |
-| See what is on a page | `jev_observe` (overview → region → element); never ask for raw HTML |
+| A multi-step goal: search, fill a form, compare, collect data, book up to payment | `jev_task`, then follow its events |
+| See what is on a page | `jev_observe` (overview → region → element → diff); never ask for raw HTML |
 | Find an element by description | `jev_find` ("the departure city input") |
-| Your own quick judgment about a page | `jev_ask` with noul/choice/score questions |
-| One precise action | `jev_act` with a ref from observe/find, or an intent |
-| Vision (canvas, images, charts) | `jev_screenshot` |
+| A quick judgment about the page | `jev_ask` with noul / choice / score questions |
+| One precise action | `jev_act` with a ref from observe/find, or with an intent |
+| Vision: canvas, images, charts, or showing the user something | `jev_screenshot` |
 | Why JEV did something | `jev_trace` (links to the debug UI and the TypeSafe playground) |
+| Setup problems | `jev_doctor`, `jev_settings` |
 
-## Writing a task
+## Choose the browser
+
+- `driver: "extension"` is the user's own Chrome, with their logins, through the jev extension. Prefer it for sites with accounts, bot checks or CAPTCHAs (travel, shopping, banking), and whenever the user may need to step in.
+- `driver: "chromium"` is jev's own Chrome profile. A headless profile cannot show a CAPTCHA to anyone, so do not use headless for sites with bot protection.
+- The default `auto` uses the extension when it is connected. `jev_tabs` shows whether it is. If the user needs the extension and it is not connected, tell them to load it and run `jev pair`.
+
+## Write a task
 
 ```json
 {
@@ -28,60 +34,76 @@ with calibrated confidence. It **does not write text or plan**. You plan and sup
   "site": "https://www.aviasales.kz",
   "params": {
     "from":   { "value": "Алматы",  "about": "departure city" },
-    "to":     { "value": "Анталия", "about": "destination city" },
+    "to":     { "value": "Анталья", "about": "destination city" },
     "period": { "value": { "from": "2026-10-01", "to": "2026-10-31" }, "about": "departure date" }
   },
   "result": { "schema": { "price": "money", "airline": "string", "depart": "time", "url": "url" }, "select": "min(price)" }
 }
 ```
 
-- `goal`, `about` and `hints` in **English** (JEV is most accurate in English). Param **values exactly as the site expects** (`"Алматы"`).
-- Dates as `YYYY-MM-DD` or a `{from,to}` range; booleans for checkboxes.
-- Put credentials in params with `"secret": true` — JEV never sees their values; never put secrets in goal or hints.
-- `result.schema` field types: string, number, money, datetime, date, time, duration, url, boolean. `select`: all | first | min(f) | max(f).
-  Minimums, dates and parsing are done in code, so they are exact.
-- Useful `policy`: `confidence` (see below), `irreversible: "ask" | "allow"`, `allowed_domains`, `max_steps`, `budget_usd`, `max_items`.
+- Write `goal`, `about` and `hints` in **English**: JEV is most accurate in English. Give param **values exactly as the site expects them**: `"Алматы"`, not a translation.
+- Dates go as `YYYY-MM-DD` or a `{from,to}` range. A range lets JEV pick the cheapest or earliest day in a low-fare calendar; code does the date math.
+- Use booleans for checkboxes.
+- Credentials go into params with `"secret": true`. JEV never sees those values. Never put secrets in goal or hints.
+- `result.schema` field types: string, number, money, datetime, date, time, duration, url, boolean. `select`: `all` | `first` | `min(f)` | `max(f)`. Parsing and minimums are computed in code, so they are exact.
+- Useful `policy` fields: `confidence` (see below), `irreversible: "ask" | "allow"`, `allowed_domains`, `max_steps`, `budget_usd`, `max_items`.
+- The task handles common site behaviour on its own:
+  - consent banners;
+  - fields the site prefilled;
+  - autocomplete suggestions;
+  - results that open in a new tab (JEV picks the tab and the task moves there);
+  - "show more" pagination.
 
 ## While a task runs
 
-The task never blocks you. Questions reach you through:
+`jev_task` returns immediately, and the task never blocks you. Questions reach you through:
 
-1. `<channel source="jev-browser" task_id=… question_id=…>` events (Claude Code started with channels);
+1. `<channel source="jev-browser" task_id=… question_id=…>` events, when Claude Code runs with channels;
 2. the block "JEV is waiting for your answer" appended to **every** jev tool result;
-3. `jev_wait {task_id}` (up to 55 s);
-4. in Claude Code: run `jev watch <task_id>` **in the background**; it exits on the next question or when the task ends, which wakes you.
+3. `jev_wait {task_id}`, which waits up to 55 s;
+4. in Claude Code, **`jev watch <task_id>` run in the background** (Bash with `run_in_background`). It prints the event as JSON and exits on the next question or when the task ends, and that exit wakes you. After you answer, start it again.
 
-Answer with `jev_answer`:
+Answer with `jev_answer`. Look first (`jev_observe`, `jev_screenshot`) when the question is not obvious.
 
 | Question kind | Typical answer |
 |---|---|
-| `ground` (which element?) | `pick` a candidate ref; add `remember: true` if it will recur on this site |
-| `subintent` (what next?) | `pick` a step id, or `hint` |
-| `missing_param` | `set_param` with key/value/about, or ask the user first |
-| `risk_confirm` (pay, send, delete…) | `continue` only if the user asked for it; otherwise `skip` or `abort` |
-| `blocker` (captcha, login wall) | ask the user to solve it in the browser, then `continue` |
-| `stuck` | look with `jev_observe`/`jev_screenshot`, then `hint`, act yourself with `jev_act` and `continue`, or `abort` |
+| `ground` (which element?) | `pick` a candidate ref, with `remember: true` if it will recur on this site. If none fits, give a `hint` or `set_param`. |
+| `subintent` (what next?) | `pick` a step id, or give a `hint` |
+| `missing_param` | `set_param` with key, value and about. Ask the user first if you do not know the value. |
+| `risk_confirm` (pay, order, send, delete…) | `continue` only if the user explicitly asked for this action; otherwise `skip` or `abort` |
+| `blocker`: CAPTCHA or bot check | Ask the user to solve it in the visible browser, then answer `continue`. If the context says `headless: true`, nobody can solve it: `abort` and rerun the task with `driver: "extension"`, or with jev's Chrome after `jev_settings set driver.chromium.headless false`. |
+| `blocker`: login wall | Ask the user to sign in in that tab (or pass credentials as secret params in a new task), then `continue` |
+| `stuck` | Observe or take a screenshot, then send a `hint`; or act yourself with `jev_act` and answer `continue`; or `abort` |
 
-If JEV keeps asking about things it gets right, lower thresholds (`thresholds` answer or `jev_control update confidence`);
-if it acts wrongly, raise them. `escalate: 0` means "never ask just because of low confidence".
+Do not answer `continue` to a blocker you have not resolved: the task will only ask again.
+
+When the task ends, report the result with its evidence URL. `jev_result` gives the full item list.
 
 ## Confidence settings
 
-Layers, lowest to highest precedence: global (`jev_settings confidence.*`), per domain (`domains.<host>.confidence`), per task
-(`policy.confidence`), live (answer `thresholds` or `jev_control update`). Presets: `cautious`, `balanced` (default), `autonomous`.
-Per decision kind: `overrides: {"ground.choice": {"act": 0.7, "escalate": 0.3}}` (kinds: assess, subintent, ground, verify, extract).
+Every JEV decision has a confidence. Above `act` the task acts on its own; below `escalate` it asks you; in between it takes a second look.
+
+The settings stack in layers, from lowest to highest precedence:
+1. global: `jev_settings confidence.*`;
+2. per domain: `domains.<host>.confidence`;
+3. per task: `policy.confidence`;
+4. live: a `thresholds` answer or `jev_control update`.
+
+- Presets: `cautious`, `balanced` (default), `autonomous`.
+- Per decision kind: `overrides: {"ground.choice": {"act": 0.7, "escalate": 0.3}}`. The kinds are assess, subintent, ground, verify, extract.
+- `escalate: 0` means "never ask just because confidence is low".
+- If JEV keeps asking about things it gets right, lower the thresholds. If it acts wrongly, raise them. `jev calibrate` in a terminal suggests values based on past decisions.
 
 ## Direct control tips
 
-- Refs (`e12`) are stable across observations while the element exists; regions are `r3`.
-- `[BLOCKING]` regions (consent walls, promos) must be dismissed first; covered elements report `occluded`.
-- For autocompletes type with `options.mode: "keys"`, then `jev_observe view:"diff"` to see the suggestion popup.
-- `jev_ask` state is built from the visible page; reference data as `` `page.elements.e12` `` / `` `page.regions.r3` ``.
-  One judgment per question; JEV cannot count, compare numbers or dates, or generate text.
+- Refs (`e12`) stay stable across observations while the element exists. Regions are `r3`.
+- A `[BLOCKING]` region (consent wall, modal) must be dismissed first. Clicking a covered element returns `occluded`; `options.force` clicks anyway.
+- For autocompletes, type with `options.mode: "keys"`, then run `jev_observe view:"diff"` to see the suggestion popup.
+- `jev_ask` builds its state from the visible page. Reference data as `` `page.elements.e12` `` or `` `page.regions.r3` ``. Ask one judgment per question. JEV cannot count, compare numbers or dates, or generate text; do that yourself.
 
 ## Setup and troubleshooting
 
-- `jev doctor` checks the key, JEV latency, Chrome and the extension. Keys: `jev settings set providers.openrouter.apiKey -` (stdin).
+- `jev_doctor` checks the key, JEV latency, Chrome and the extension. Keys are set in a terminal: `jev settings set providers.openrouter.apiKey -` (reads stdin).
 - Provider: `provider` = `openrouter` (model `typesafe/jev-1.13`) or `typesafe` (official API, `jev-latest`).
-- Your own Chrome: load the extension (`jev install` prints the path), then `jev pair`. Otherwise jev uses its own Chrome profile.
-- Debug UI: `jev ui`.
+- Extension: load `dist/extension` unpacked in `chrome://extensions` (Developer mode), then run `jev pair` and enter the code in the side panel.
+- Debug UI: `jev ui` prints a local link that shows every step, JEV's probabilities, screenshots and replay.

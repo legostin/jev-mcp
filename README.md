@@ -21,6 +21,7 @@
   <a href="#confidence-and-human-in-the-loop">Confidence</a> ·
   <a href="#safety">Safety</a> ·
   <a href="#debugging-and-observability">Debugging</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
   <a href="#faq">FAQ</a>
 </p>
 
@@ -100,45 +101,77 @@ step 6-8 extract         read 30 results across "show more" pages, selected min(
 
 ## Quick start
 
-Requirements: Node.js ≥ 22.18, Google Chrome (or Chromium), and an OpenRouter or TypeSafe API key.
+Requirements: macOS or Linux, Node.js ≥ 22.18, Google Chrome (or Chromium), and an API key for [OpenRouter](https://openrouter.ai/typesafe/jev-1.13) or the [TypeSafe API](https://console.typesafe.ai).
 
 ```bash
 git clone https://github.com/legostin/jev-mcp.git
 cd jev-mcp
 npm install
-npm run build:web                                          # builds the Chrome extension and the debug UI
-node bin/jev.mjs install                                   # registers the MCP server in Claude Code / Codex, links the skill and the `jev` CLI
-jev settings set providers.openrouter.apiKey -             # paste your key on stdin; stored in ~/.config/jev-browser/config.json (0600)
-jev doctor                                                 # checks the key, JEV latency, Chrome and the extension
+npm run build:web                              # builds the Chrome extension (dist/extension) and the debug UI (dist/ui)
+node bin/jev.mjs install                       # registers the MCP server in Claude Code and Codex, links the skill and the `jev` CLI
+jev settings set providers.openrouter.apiKey - # paste the key, press Enter, then Ctrl-D; stored in ~/.config/jev-browser/config.json (0600)
+jev doctor                                     # checks the key, JEV latency, Chrome and the extension
 ```
 
-Using the official TypeSafe API instead:
+`jev install` links the CLI to `~/.local/bin/jev`. If `jev` is not found, add `~/.local/bin` to your `PATH` or run `node bin/jev.mjs …`.
+
+To use the official TypeSafe API instead of OpenRouter:
 
 ```bash
 jev settings set provider typesafe
 jev settings set providers.typesafe.apiKey -
 ```
 
+You never start the daemon yourself. The first MCP call or `jev` command starts it, and it exits after 30 minutes without clients or tasks. `jev stop` stops it immediately.
+
 ### Use with Claude Code
 
-`jev install` runs `claude mcp add -s user jev-browser -- node <repo>/bin/jev.mjs mcp` for you. Then ask Claude:
+`jev install` registers the server as `claude mcp add -s user jev-browser -- node <repo>/bin/jev.mjs mcp`. It becomes available in **new** Claude Code sessions; check it with `claude mcp list`. Then ask Claude:
 
 > Find the cheapest flight from Almaty to Antalya in October on aviasales.kz
 
-Claude calls `jev_task` and keeps working while JEV runs. Questions from JEV reach Claude in one of these ways:
-- as `<channel>` events, if you start Claude Code with `--dangerously-load-development-channels server:jev-browser`;
-- from `jev watch <task>` running in the background;
-- appended to any jev tool result.
+Claude calls `jev_task` and keeps working while JEV runs. Questions from JEV reach Claude in three ways:
+
+1. **Pushed into the session.** Start Claude Code with
+   `claude --dangerously-load-development-channels server:jev-browser`
+   (channels are in research preview and need a claude.ai login). Questions then arrive as `<channel source="jev-browser" …>` events.
+2. **Background watcher.** Claude runs `jev watch <task_id>` in the background. It exits on the next question or when the task finishes, which wakes Claude.
+3. **Always on.** Any jev tool result ends with the pending questions, and `jev_wait` blocks for up to 55 s.
+
+The `jev-browser` skill (linked into `~/.claude/skills`) teaches Claude how to write tasks and answer questions.
 
 ### Use with Codex and other MCP clients
 
-`jev install` adds `[mcp_servers.jev-browser]` to `~/.codex/config.toml`. Any other client can run `node <repo>/bin/jev.mjs mcp` over stdio.
+`jev install` adds `[mcp_servers.jev-browser]` to `~/.codex/config.toml` and links the skill into `~/.agents/skills`. Any other client can run `node <repo>/bin/jev.mjs mcp` over stdio. Questions arrive through tool results and `jev_wait`.
 
-### Drive your own Chrome (extension)
+### Choose the browser
 
-1. `npm run build:web`, then load `dist/extension` as an unpacked extension in `chrome://extensions` (Developer mode).
-2. Run `jev pair` and enter the 6-digit code in the JEV side panel.
-3. Tasks and tools can now use `driver: "extension"`. The side panel shows tasks and pending questions, and has pause, take-over and a live confidence slider.
+| Driver | What it is | When to use |
+|---|---|---|
+| `extension` | Your everyday Chrome, driven through the jev extension | Sites with logins, bot checks or CAPTCHAs; when you want to watch or take over |
+| `chromium` (visible) | jev's own Chrome window with a separate, persistent profile | Default when the extension is not connected |
+| `chromium` (headless) | The same profile without a window (`jev settings set driver.chromium.headless true`) | Background jobs and CI. Many travel and shopping sites show a CAPTCHA to headless browsers. |
+
+`driver.default` is `auto`: it uses the extension when it is connected and jev's Chrome otherwise. A task or tool call can override this with `driver: "extension" | "chromium"`.
+
+### Connect your own Chrome (extension)
+
+1. Get the extension: use `dist/extension` after `npm run build:web`, or download `jev-extension-*.zip` from [Releases](https://github.com/legostin/jev-mcp/releases) and unzip it.
+2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the folder. The extension id is `ggdonbkfnfociekejpgdbkagbelpoceb`; `jev install` allow-lists it.
+3. Run `jev pair`. It prints a 6-digit code valid for 10 minutes. Click the JEV toolbar icon to open the side panel and enter the code.
+4. The side panel shows **connected**. `jev doctor` now reports `extension: connected`.
+
+While jev controls a tab, Chrome shows a "JEV Browser started debugging this browser" bar; that is expected. The side panel lists tasks and pending questions, and has **Pause**, **Take over**, **Resume**, **Cancel**, a live confidence slider and element highlighting. If you click or type in a task's tab yourself, the task pauses until you resume it.
+
+The extension talks only to `ws://127.0.0.1:47913` (`driver.extensionPort`; the side panel has a port field if you change it). Tasks on extension tabs pause while the extension is disconnected and resume when it reconnects.
+
+### Update or remove
+
+```bash
+git pull && npm install && npm run build:web   # then click "Reload" on the extension in chrome://extensions
+jev stop                                       # the next call starts the new version
+jev uninstall                                  # removes the MCP registrations, skill links and CLI link (keeps settings and traces)
+```
 
 ## MCP tools
 
@@ -251,6 +284,19 @@ node scripts/observe-fixture.ts flights.html   # print the perception output for
 ```
 
 The code is TypeScript and runs natively on Node's type stripping, so the daemon, MCP server and CLI need no build step. Fixture sites in `fixtures/sites/` imitate real-world difficulties: Russian labels, unlabeled inputs, consent walls, autocomplete, calendars, shadow DOM, cross-origin iframes, pagination.
+
+## Troubleshooting
+
+| Symptom | What to do |
+|---|---|
+| `jev doctor` shows `key: missing` or `jev` fails with `auth` | `jev settings set providers.openrouter.apiKey -` (or the `typesafe` provider). Check the key and credit at openrouter.ai. |
+| A task asks a `blocker` question about a CAPTCHA or bot check | Solve it in the browser window, then answer `continue`. If the tab is headless, nobody can see it: cancel and rerun with `driver: "extension"` or `jev settings set driver.chromium.headless false`. |
+| `extension: not connected` | Open the side panel and check its status. Run `jev pair` again if it says *unpaired*. Make sure nothing else uses port 47913. |
+| A task paused with `user_takeover` | Someone clicked or typed in the task's tab. Resume it from the side panel, `jev_control resume` or the debug UI. |
+| A task keeps asking the same `stuck` question | Look at the tab with `jev_observe` / `jev_screenshot` or open `jev ui`, then answer with a `hint`, act yourself with `jev_act` and answer `continue`, or `abort`. |
+| JEV asks too often, or acts too eagerly | Lower or raise the thresholds (`confidence.preset`, `confidence.act` / `escalate`, per domain or per task), and check `jev calibrate`. |
+| A task says `interrupted` after an update or restart | The daemon restarted. Its trace is kept (`jev_trace`); start the task again. |
+| Something else | `jev doctor`, the daemon log at `~/.local/share/jev-browser/jevd.log`, and `jev ui` for the full decision trace. `jev stop` restarts the daemon on the next call. |
 
 ## FAQ
 

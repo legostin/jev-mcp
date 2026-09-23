@@ -136,9 +136,10 @@
 <pre><code>git clone https://github.com/legostin/jev-mcp.git && cd jev-mcp
 npm install && npm run build:web
 node bin/jev.mjs install                       # Claude Code + Codex MCP, skill, `jev` CLI
-jev settings set providers.openrouter.apiKey - # or: jev settings set provider typesafe
+jev settings set providers.openrouter.apiKey - # paste the key, Enter, Ctrl-D (or: jev settings set provider typesafe)
 jev doctor</code></pre>
-    <p>Then ask your agent: <em>"Find the cheapest flight from Almaty to Antalya in October on aviasales.kz"</em>. It will call <code>jev_task</code> and keep working while JEV runs.</p>
+    <p><strong>Use your own Chrome</strong> (recommended for sites with logins or bot checks): load <code>dist/extension</code> (or the zip from <a href="https://github.com/legostin/jev-mcp/releases">Releases</a>) with <em>Load unpacked</em> in <code>chrome://extensions</code>, run <code>jev pair</code> and enter the code in the JEV side panel.</p>
+    <p>Then ask your agent: <em>"Find the cheapest flight from Almaty to Antalya in October on aviasales.kz"</em>. It calls <code>jev_task</code> and keeps working while JEV runs. Questions arrive through Claude Code channels, <code>jev watch</code>, or appended to any jev tool result. See the <a href="https://github.com/legostin/jev-mcp#troubleshooting">troubleshooting guide</a>.</p>
   </section>
 
   <section>
