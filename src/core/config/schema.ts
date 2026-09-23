@@ -34,6 +34,12 @@ export const confidenceSchema = z.object({
   /** Shorthand: applies to every noul decision kind. */
   escalateOnUnsure: z.boolean().optional(),
   overrides: z.record(overrideKey, z.union([choiceThSchema, noulThSchema])).optional(),
+  /** Reversible steps: act on a leader below `act` (down to `floor`), verify, roll back and try the next, up to `tries`. */
+  trial: z.object({
+    enabled: z.boolean().optional(),
+    floor: unit.optional(),
+    tries: z.number().int().min(1).max(5).optional(),
+  }).optional(),
 });
 export type ConfidenceConfig = z.infer<typeof confidenceSchema>;
 

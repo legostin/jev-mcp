@@ -10,6 +10,11 @@ const confidenceArg = z.object({
   escalate: z.number().min(0).max(1).optional().describe('Ask you below this confidence; 0 = never ask because of low confidence.'),
   escalateOnUnsure: z.boolean().optional(),
   overrides: z.record(z.string(), z.record(z.string(), z.any())).optional().describe('Per decision kind, e.g. {"ground.choice": {"act": 0.7, "escalate": 0.3}}.'),
+  trial: z.object({
+    enabled: z.boolean().optional(),
+    floor: z.number().min(0).max(1).optional(),
+    tries: z.number().int().min(1).max(5).optional(),
+  }).optional().describe('Reversible steps (fields, filters, sorting, pickers) act on the best candidate down to `floor` confidence, verify the effect, roll back and try the next, up to `tries` times, before asking you. Default {enabled: true, floor: 0.25, tries: 2}.'),
 }).describe('Confidence thresholds for this task (override global and per-domain settings).');
 
 const paramArg = z.object({

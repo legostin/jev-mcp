@@ -26,7 +26,7 @@ import { dateRange, fieldHoldsValue, normalizeText, paramKind, requiredEmptyFiel
 import { Emitter } from '../util/events.ts';
 import { newId } from '../util/ids.ts';
 import { logger } from '../util/log.ts';
-import type { ConfidenceConfig } from '../config/schema.ts';
+import type { ConfidenceConfig, DecisionKind } from '../config/schema.ts';
 import type {
   AnswerInput, Escalation, EscalationKind, ParamStatus, StepSummary, TaskResult, TaskSpec, TaskState,
 } from './types.ts';
@@ -640,7 +640,7 @@ export class Task extends Emitter<TaskEvents> {
 
   private async chooseSubintent(model: Model, a: AssessOutput): Promise<Subintent> {
     const th = this.th();
-    const yes = (v: number, kind: keyof Thresholds = 'assess') => gateNoul(v, th[kind].noul) === 'yes';
+    const yes = (v: number, kind: DecisionKind = 'assess') => gateNoul(v, th[kind].noul) === 'yes';
     if (a.pageKind === 'captcha' && a.pageKindConfidence >= th.assess.choice.escalate) {
       return { type: 'blocker', kind: 'captcha', summary: 'The page shows a CAPTCHA or bot check. Solve it in the browser (or ask the user), then answer "continue".' };
     }

@@ -56,6 +56,11 @@ describe('config store', () => {
 });
 
 describe('thresholds', () => {
+  it('trial settings come from presets and layers', () => {
+    expect(resolveThresholds({}).trial).toEqual({ enabled: true, floor: 0.25, tries: 2 });
+    expect(resolveThresholds({ task: { preset: 'cautious' } }).trial.enabled).toBe(false);
+    expect(resolveThresholds({ domain: { trial: { floor: 0.1 } }, live: { trial: { tries: 4 } } }).trial).toEqual({ enabled: true, floor: 0.1, tries: 4 });
+  });
   it('uses the balanced preset by default', () => {
     expect(resolveThresholds({})).toEqual(PRESETS.balanced);
   });
