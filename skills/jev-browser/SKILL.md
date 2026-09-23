@@ -67,7 +67,7 @@ Answer with `jev_answer`. Look first (`jev_observe`, `jev_screenshot`) when the 
 
 | Question kind | Typical answer |
 |---|---|
-| `ground` (which element?) | `pick` a candidate ref, with `remember: true` if it will recur on this site. If the target is not on the page (for example it sits behind "advanced search"), answer `none` and add a `hint` with `scope: "domain"` in a later answer if the site needs one. |
+| `ground` (which element?) | `pick` a candidate ref, with `remember: true` if it will recur on this site. If the target is not on the page (for example it sits behind "advanced search"), answer `none` and add a `hint` with `scope: "domain"` in a later answer if the site needs one. If the summary says "Already tried and rolled back", those elements did not work: pick another one or give a hint. |
 | `subintent` (what next?) | `pick` a step id, or give a `hint` |
 | `missing_param` | `set_param` with key, value and about. Ask the user first if you do not know the value. |
 | `risk_confirm` (pay, order, send, delete…) | `continue` only if the user explicitly asked for this action; otherwise `skip` or `abort` |
@@ -92,6 +92,8 @@ The settings stack in layers, from lowest to highest precedence:
 - Presets: `cautious`, `balanced` (default), `autonomous`.
 - Per decision kind: `overrides: {"ground.choice": {"act": 0.7, "escalate": 0.3}}`. The kinds are assess, subintent, ground, verify, extract.
 - `escalate: 0` means "never ask just because confidence is low".
+- Trials: reversible steps (fields, chips, dropdowns, date pickers, "more filters", sorting, overlays) act on the best candidate down to `trial.floor` (default 0.25), verify the effect, roll back and try the next, up to `trial.tries` (default 2). You are asked only after that, and the question lists what was tried. Set `policy.confidence.trial` (`enabled`, `floor`, `tries`) to change it; submits never use trials.
+- A hint you give in answer to a question about one step is bound to that step's param, so it will not confuse other steps. Put hints that apply everywhere into the task's `hints`.
 - If JEV keeps asking about things it gets right, lower the thresholds. If it acts wrongly, raise them. `jev calibrate` in a terminal suggests values based on past decisions.
 
 ## Direct control tips
