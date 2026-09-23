@@ -162,6 +162,7 @@ export class Task extends Emitter<TaskEvents> {
   /** Error pages already reloaded once (by URL). */
   private reloaded = new Set<string>();
   private noResultsOn: string | null = null;
+  private errorPages = 0;
   /** Address right after the last submit: a later change means the site applied filters itself. */
   private lastSubmitUrl: string | null = null;
   /** Params changed since the last submit: filters on list pages apply only after "Show N results". */
@@ -776,6 +777,15 @@ export class Task extends Emitter<TaskEvents> {
     }
     // A server error is often transient: reload once, then go back. "Nothing found" is a question for the agent.
     if (a.pageKind === 'error' && a.pageKindConfidence >= th.assess.choice.escalate) {
+      this.errorPages++;
+      if (this.errorPages >= 3) {
+        // Errors that survive a reload and a step back usually mean the site limits automated browsing.
+        this.errorPages = 0;
+        return {
+          type: 'blocker', kind: 'site_error',
+          summary: 'The site keeps showing error pages (a reload and going back did not help); it may be limiting automated browsing. Try later, or rerun with driver "extension" (your Chrome); answer "continue" to retry now, or abort.',
+        };
+      }
       return this.reloaded.has(model.url) ? { type: 'go_back' } : { type: 'reload' };
     }
     if (a.pageKind === 'no_results' && a.pageKindConfidence >= th.assess.choice.act && this.spec.result && this.noResultsOn !== model.signature) {
@@ -944,11 +954,13 @@ export class Task extends Emitter<TaskEvents> {
         this.reloaded.add(model.url);
         await (await this.page()).navigate(model.url);
         await this.settle();
+        this.recheckParams();
         return { outcome: 'ok', note: 'the page showed an error; reloaded it', action: { type: 'reload' } };
       }
       case 'go_back': {
         const ok = await (await this.page()).back();
         await this.settle();
+        this.recheckParams();
         return { outcome: ok ? 'ok' : 'failed', note: ok ? 'went back' : 'no page to go back to', action: { type: 'back' } };
       }
       case 'wait': {
@@ -960,6 +972,13 @@ export class Task extends Emitter<TaskEvents> {
         this.finish('done', { result: { goal_reached: true }, evidence: { url: model.url, refs: [], snippets: [model.title] } });
         return { outcome: 'finished', note: `done: ${sub.reason}` };
       }
+    }
+  }
+
+  /** After going back or reloading, typed values may be gone: let the next assess check them again. */
+  private recheckParams(): void {
+    for (const [k, st] of Object.entries(this.status)) {
+      if (st === 'done' && paramKind(this.params[k]) === 'text' && !this.params[k].secret) this.status[k] = 'typed';
     }
   }
 
@@ -1112,7 +1131,8 @@ export class Task extends Emitter<TaskEvents> {
       state: buildState({ step: this.card(sub), extra: { element: renderCandidate(this.model!, el.ref) } }, this.budget()),
       questions: { same: { type: 'noul', instructions: 'Does `element` show the value `step.value` itself (the same value, possibly translated or abbreviated), rather than a field or list for choosing it?' } },
     });
-    return gateNoul(noulOf(res.answers, 'same'), this.th().ground.noul) === 'yes';
+    // A wrong "yes" only costs a verified, rolled-back trial: the bar is lower than for acting blind.
+    return noulOf(res.answers, 'same') >= 0.5;
   }
 
   /** Custom dropdowns (div-based selects, multi-select checkboxes): open, pick the option matching the value, close. */
