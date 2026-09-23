@@ -125,6 +125,12 @@ export class ChromiumDriver implements BrowserDriver {
   async closeTab(tabId: string): Promise<void> {
     this.sessions.delete(tabId);
     await this.conn.send('Target.closeTarget', { targetId: tabId });
+    // closeTarget resolves before the target is gone; wait so callers see a consistent tab list.
+    for (let i = 0; i < 40; i++) {
+      const { targetInfos } = await this.conn.send<{ targetInfos: { targetId: string }[] }>('Target.getTargets');
+      if (!targetInfos.some((t) => t.targetId === tabId)) return;
+      await sleep(50);
+    }
   }
 
   async activateTab(tabId: string): Promise<void> {

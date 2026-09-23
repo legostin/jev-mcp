@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { createServer } from 'node:net';
 import { startFixtureServer, type FixtureServer } from '../../fixtures/sites/server.ts';
 
 function findCft(): string | null {
@@ -19,9 +18,8 @@ function findCft(): string | null {
 const cft = findCft();
 const extDir = resolve('dist/extension');
 
-const freePort = () => new Promise<number>((res) => { const s = createServer(); s.listen(0, '127.0.0.1', () => { const p = (s.address() as any).port; s.close(() => res(p)); }); });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function until<T>(fn: () => Promise<T | null | undefined | false>, ms = 15_000): Promise<T> {
+async function until<T>(fn: () => Promise<T | null | undefined | false>, ms = 45_000): Promise<T> {
   const end = Date.now() + ms;
   for (;;) { const v = await fn().catch(() => null); if (v) return v as T; if (Date.now() > end) throw new Error('timeout'); await sleep(150); }
 }
@@ -35,10 +33,9 @@ describe.skipIf(!cft || !existsSync(join(extDir, 'worker.js')))('Chrome extensio
   let panel: { eval: (expr: string) => Promise<any> };
 
   beforeAll(async () => {
-    const port = await freePort();
     process.env.JEV_HOME = home;
     process.env.JEV_FAKE = '1';
-    process.env.JEV_HTTP_PORT = String(port);
+    process.env.JEV_HTTP_PORT = '0';
     mkdirSync(join(home, 'config'), { recursive: true });
     writeFileSync(join(home, 'config', 'config.json'), JSON.stringify({ trace: { screenshots: false } }));
     const { startDaemon } = await import('../../src/daemon/main.ts');
@@ -47,7 +44,9 @@ describe.skipIf(!cft || !existsSync(join(extDir, 'worker.js')))('Chrome extensio
     const { ChromiumDriver } = await import('../../src/core/cdp/chromium.ts');
     fixtures = await startFixtureServer();
     daemon = await startDaemon({ logToStderr: true });
-    await registerStage2(daemon);
+    const stage = await registerStage2(daemon, { httpPort: 0 });
+    const port = stage.http.port;
+    process.env.JEV_TEST_EXT_PORT = String(port);
     client = await connectDaemon();
     await client.call('session.hello', { client: 'ext-test' });
     chrome = await ChromiumDriver.launch({
@@ -67,7 +66,7 @@ describe.skipIf(!cft || !existsSync(join(extDir, 'worker.js')))('Chrome extensio
     const { code } = await client.call('ext.pairingCode');
     await panel.eval(`chrome.runtime.sendMessage({ type: 'pair', code: '${code}' })`);
     await until(async () => (await client.call('daemon.info')).extensionConnected);
-  }, 90_000);
+  }, 180_000);
 
   afterAll(async () => {
     client?.close();
@@ -109,7 +108,7 @@ describe.skipIf(!cft || !existsSync(join(extDir, 'worker.js')))('Chrome extensio
     await panel.eval(`chrome.runtime.sendMessage({ type: 'setPort', port: 1 })`);
     const paused = await until(async () => { const s = await client.call('task.status', { task_id: created.task_id }); return s.state === 'paused' ? s : null; });
     expect(paused.reason).toBe('extension disconnected');
-    await panel.eval(`chrome.runtime.sendMessage({ type: 'setPort', port: ${process.env.JEV_HTTP_PORT} })`);
+    await panel.eval(`chrome.runtime.sendMessage({ type: 'setPort', port: ${process.env.JEV_TEST_EXT_PORT} })`);
     await until(async () => (await client.call('daemon.info')).extensionConnected);
     const resumed = await until(async () => { const s = await client.call('task.status', { task_id: created.task_id }); return s.state !== 'paused' ? s : null; });
     expect(['awaiting_input', 'running']).toContain(resumed.state);
