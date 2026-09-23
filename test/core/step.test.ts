@@ -57,7 +57,7 @@ describe('value labels', () => {
     const { isValueLabel } = await import('../../src/core/runner/progress.ts');
     const cases: Array<[string, string, boolean]> = [
       ['Toyota (1 234)', 'toyota', true], ['Toyota 1234', 'toyota', true], ['ВАЗ 2107', 'ваз 2107', true],
-      ['Samsung Galaxy S24 (12)', 'samsung galaxy s24', true], ['Toyota Camry', 'toyota', false], ['Где искать ▾', 'где искать', true], ['2107', '2107', true],
+      ['Samsung Galaxy S24 (12)', 'samsung galaxy s24', true], ['Toyota Camry', 'toyota', false], ['Город ▾', 'город', true], ['2107', '2107', true],
     ];
     for (const [name, want, expected] of cases) expect(isValueLabel(name, want), name).toBe(expected);
   });
@@ -70,6 +70,6 @@ describe('dropdown triggers', () => {
     expect(showsValue(el('Караганда ▾'), 'караганда')).toBe(true);
     expect(showsValue(el('Город: Алматы'), 'алматы')).toBe(true);
     expect(showsValue(el('Алматы Алматы Астана Актобе Караганда Актау Кокшетау Талдыкорган Атырау Семей'), 'алматы')).toBe(false);
-    expect(showsValue(el('Где искать'), 'павлодар')).toBe(false);
+    expect(showsValue(el('Город'), 'павлодар')).toBe(false);
   });
 });

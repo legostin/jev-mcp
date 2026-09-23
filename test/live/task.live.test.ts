@@ -135,7 +135,7 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     await printSteps(created.task_id);
     console.log('RESULT', JSON.stringify({ selected: result.result?.selected, stats: result.stats }));
     expect(result.status).toBe('done');
-    expect(result.result.selected.price.amount).toBe(700000);
+    expect(result.result.selected.price.amount).toBe(650000);
     expect(result.result.selected.title).toMatch(/Toyota Camry/);
     expect(questions).toHaveLength(0);
   }, 300_000);

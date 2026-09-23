@@ -811,10 +811,14 @@ export class Task extends Emitter<TaskEvents> {
         }
         return paramKind(this.params[k]) === 'date' ? { type: 'pick_date', key: k } : { type: 'fill_param', key: k };
       }
-      // A param with no field on this page may sit behind "advanced search" / "more filters": try to reveal it once.
-      for (const k of Object.keys(this.params)) {
-        if ((this.status[k] === 'pending' || this.status[k] === 'typed') && this.absentOn[k] === model.signature && !this.revealTried.has(k)) {
-          return { type: 'reveal', key: k };
+      // A param with no field here usually lives on the results page (filters come with results): search first.
+      // Only then look behind "advanced search" / "more filters", once.
+      const anyFilled = Object.values(this.status).some((s) => s === 'done');
+      if (this.submitsDone > 0 || !anyFilled) {
+        for (const k of Object.keys(this.params)) {
+          if ((this.status[k] === 'pending' || this.status[k] === 'typed') && this.absentOn[k] === model.signature && !this.revealTried.has(k)) {
+            return { type: 'reveal', key: k };
+          }
         }
       }
       const missing = Object.entries(a.requiredUncovered).filter(([, p]) => yes(p));
@@ -1063,12 +1067,28 @@ export class Task extends Emitter<TaskEvents> {
     return { outcome: typedOk ? 'ok' : 'failed', note, action: { type: 'type', ref: el.ref, param: k } };
   }
 
+  /**
+   * Does a control whose label is not literally the value stand for it anyway ("Новый" for "New", "Almaty" for
+   * "Алматы")? Sites pick their UI language themselves; the agent cannot know it. Dropdown openers are not asked.
+   */
+  private async standsForValue(sub: Extract<Subintent, { type: 'fill_param' }>, el: ElementNode): Promise<boolean> {
+    const label = (el.name || el.text || '').trim();
+    if (!label || label.length > 40 || el.states.expanded !== undefined || el.attrs['aria-haspopup']) return false;
+    if (el.hints?.some((h) => /dropdown|toggle|select|picker/.test(h))) return false;
+    const res = await runQuestions(this.qctx(), {
+      template: 'widget.same_value',
+      state: buildState({ step: this.card(sub), extra: { element: renderCandidate(this.model!, el.ref) } }, this.budget()),
+      questions: { same: { type: 'noul', instructions: 'Does `element` show the value `step.value` itself (the same value, possibly translated or abbreviated), rather than a field or list for choosing it?' } },
+    });
+    return gateNoul(noulOf(res.answers, 'same'), this.th().ground.noul) === 'yes';
+  }
+
   /** Custom dropdowns (div-based selects, multi-select checkboxes): open, pick the option matching the value, close. */
   private async pickFromDropdown(sub: Extract<Subintent, { type: 'fill_param' }>, trigger: ElementNode, model: Model, trial: boolean): Promise<Outcome> {
     const k = sub.key;
     const p = this.params[k];
     const want = normalizeText(String(p.value));
-    if (isValueLabel(trigger.name, want) || isValueLabel(trigger.text ?? '', want)) {
+    if (isValueLabel(trigger.name, want) || isValueLabel(trigger.text ?? '', want) || await this.standsForValue(sub, trigger)) {
       // A quick-select button that IS the value ("Павлодар", "Toyota"): press it unless it is already on.
       if (!trigger.states.selected && !trigger.states.checked) {
         await this.click(trigger);
@@ -1080,7 +1100,7 @@ export class Task extends Emitter<TaskEvents> {
       this.settleGrounding(true);
       return { outcome: 'ok', note: `pressed ${trigger.ref} "${trigger.name}" for ${k}`, action: { type: 'click', ref: trigger.ref, param: k } };
     }
-    // A dropdown trigger that already shows the value ("Караганда ▾" instead of "Где искать ▾").
+    // A dropdown trigger that already shows the value ("Караганда ▾" instead of "Город ▾").
     if ((trigger.kind === 'button' || trigger.kind === 'clickable') && showsValue(trigger, want)) {
       this.status[k] = 'done';
       return { outcome: 'ok', note: `${k} already set in ${trigger.ref} "${trigger.name}"` };

@@ -51,6 +51,11 @@
   </section>
   <section id="results" hidden>
     <h2>Результаты поиска</h2>
+    <div class="filter-row" id="condition-row">Состояние:
+      <button type="button" class="filter-button" data-condition="used" aria-pressed="false">С пробегом</button>
+      <button type="button" class="filter-button" data-condition="new" aria-pressed="false">Новые</button>
+    </div>
+    <p id="condition-chosen"></p>
     <div class="sort">Сортировать по: <span class="sort-trigger" role="button" tabindex="0" id="sort-trigger">дате объявления</span></div>
     <div id="list"></div>
   </section>
@@ -58,7 +63,7 @@
 <footer>© Авторынок (fixture). <a href="#">Правила</a> · <a href="#">Помощь</a></footer>
 <script>
 const DATA = {
-  city: { opener: 'Где искать', chips: ['Алматы', 'Астана', 'Шымкент', 'Павлодар'], all: ['Алматы', 'Астана', 'Шымкент', 'Павлодар', 'Караганда', 'Актобе', 'Костанай', 'Атырау', 'Семей', 'Усть-Каменогорск'] },
+  city: { opener: 'Город', chips: ['Алматы', 'Астана', 'Шымкент', 'Павлодар'], all: ['Алматы', 'Астана', 'Шымкент', 'Павлодар', 'Караганда', 'Актобе', 'Костанай', 'Атырау', 'Семей', 'Усть-Каменогорск'] },
   brand: { opener: 'Марка', chips: ['Toyota', 'Hyundai', 'Kia', 'ВАЗ (Lada)'], all: ['Toyota', 'Hyundai', 'Kia', 'ВАЗ (Lada)', 'Mercedes-Benz', 'BMW', 'Volkswagen', 'Lexus', 'Nissan', 'Chevrolet'] },
 };
 const MODELS = {
@@ -69,7 +74,7 @@ const MODELS = {
   'Mercedes-Benz': ['E 200', 'S 500', 'GLE'], BMW: ['X5', '520', '320'], Volkswagen: ['Polo', 'Passat', 'Tiguan'],
   Lexus: ['RX 350', 'LX 570', 'ES 250'], Nissan: ['Almera', 'X-Trail', 'Qashqai'], Chevrolet: ['Cobalt', 'Nexia', 'Malibu'],
 };
-const state = { city: null, brand: null, model: null, sort: 'date' };
+const state = { city: null, brand: null, model: null, sort: 'date', condition: null };
 let popup = null;
 
 function rand(seed) { let h = 2166136261; for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 100000) / 100000; }
@@ -158,12 +163,12 @@ function listings() {
     const brand = state.brand || DATA.brand.all[i % DATA.brand.all.length];
     const model = state.model || (MODELS[brand] || ['—'])[i % (MODELS[brand] || ['—']).length];
     return {
-      id: 228599100 + Math.round(rand(`${seed}id${i}`) * 90000), title: `${brand} ${model}`, year: 1993 + Math.floor(rand(`${seed}y${i}`) * 32),
+      id: 100000 + Math.round(rand(`${seed}id${i}`) * 90000), title: `${brand} ${model}`, year: 1993 + Math.floor(rand(`${seed}y${i}`) * 32),
       price: 900000 + Math.round(rand(`${seed}p${i}`) * 60) * 250000, city: state.city || DATA.city.all[i % DATA.city.all.length], order: i,
     };
   });
   // The known cheapest listing sits in the middle of the default (date) ordering.
-  items[7].price = 700000; items[7].year = 1995;
+  items[7].price = 650000; items[7].year = 1998;
   return items;
 }
 
@@ -192,6 +197,7 @@ function query() {
   if (state.brand) p.set('brand', state.brand);
   if (state.model) p.set('model', state.model);
   if (state.sort !== 'date') p.set('sort_by', state.sort);
+  if (state.condition) p.set('condition', state.condition);
   return `?${p}`;
 }
 
@@ -200,6 +206,17 @@ document.getElementById('search').addEventListener('submit', () => {
   history.pushState(null, '', query());
   renderResults();
 });
+
+// Result filters exist only next to results (as on most search sites).
+for (const b of document.querySelectorAll('[data-condition]')) {
+  b.addEventListener('click', () => {
+    state.condition = state.condition === b.dataset.condition ? null : b.dataset.condition;
+    for (const x of document.querySelectorAll('[data-condition]')) x.setAttribute('aria-pressed', String(x.dataset.condition === state.condition));
+    document.getElementById('condition-chosen').textContent = state.condition ? `Состояние: ${b.textContent}` : '';
+    history.pushState(null, '', query());
+    renderResults();
+  });
+}
 
 document.getElementById('sort-trigger').addEventListener('click', (e) => {
   e.stopPropagation();

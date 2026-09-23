@@ -1,37 +1,37 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Аренда квартир — объявления</title>
+<title>Listings — first visit tour</title>
 <style>
   body { font-family: sans-serif; margin: 0; }
   main { padding: 16px; max-width: 900px; }
   .card { border-bottom: 1px solid #ddd; padding: 16px 0; position: relative; }
-  .note { padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; background: #fff; }
-  /* A tutorial: an empty dimmer over the whole page and a tooltip pointing at the first card. */
-  .tutorial__cover { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 100; }
-  .tutorial__tip { position: absolute; left: 180px; top: 150px; width: 320px; background: #fff; padding: 16px; border-radius: 12px; z-index: 101; }
-  .tutorial__close { position: absolute; right: 10px; top: 10px; border: 0; background: none; font-size: 20px; cursor: pointer; }
+  .save { padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; background: #fff; }
+  /* A first-visit tour: an empty dimmer over the whole page and a tooltip pointing at the first card. */
+  .tour__cover { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 100; }
+  .tour__tip { position: absolute; left: 180px; top: 150px; width: 320px; background: #fff; padding: 16px; border-radius: 12px; z-index: 101; }
+  .tour__close { position: absolute; right: 10px; top: 10px; border: 0; background: none; font-size: 20px; cursor: pointer; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Аренда квартир</h1>
-  <p>Сортировать: <a href="?sort=new">Новые</a> · <a href="?sort=cheap" id="cheap">Дешевые</a> · <a href="?sort=exp">Дорогие</a></p>
+  <h1>Listings</h1>
+  <p>Sort: <a href="?sort=new">Newest</a> · <a href="?sort=cheap" id="cheap">Cheapest</a> · <a href="?sort=exp">Most expensive</a></p>
   <section id="list">
-    <div class="card"><a href="/a/1">2-комнатная квартира · 50 м²</a> <b>500 000 ₸</b> <button class="note">Оставить заметку</button></div>
-    <div class="card"><a href="/a/2">2-комнатная квартира · 48 м²</a> <b>360 000 ₸</b> <button class="note">Оставить заметку</button></div>
-    <div class="card"><a href="/a/3">2-комнатная квартира · 60 м²</a> <b>420 000 ₸</b> <button class="note">Оставить заметку</button></div>
+    <div class="card"><a href="/item/1">Item one</a> <b>$500</b> <button class="save">Save</button></div>
+    <div class="card"><a href="/item/2">Item two</a> <b>$360</b> <button class="save">Save</button></div>
+    <div class="card"><a href="/item/3">Item three</a> <b>$420</b> <button class="save">Save</button></div>
   </section>
 </main>
-<div id="overlay-tutorial" class="tutorial__cover"></div>
-<div class="tutorial__tip" id="tip">
-  <button class="tutorial__close" id="tip-close"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M1 1l12 12M13 1L1 13" stroke="#333"/></svg></button>
-  <h3>Оставить заметку</h3>
-  <p>Объявления с заметками хранятся в Избранном</p>
+<div id="tour-cover" class="tour__cover"></div>
+<div class="tour__tip" id="tip">
+  <button class="tour__close" id="tip-close"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M1 1l12 12M13 1L1 13" stroke="#333"/></svg></button>
+  <h3>Save items</h3>
+  <p>Saved items appear in your list on every device.</p>
 </div>
 <script>
-  document.getElementById('tip-close').onclick = () => { document.getElementById('overlay-tutorial').remove(); document.getElementById('tip').remove(); };
+  document.getElementById('tip-close').onclick = () => { document.getElementById('tour-cover').remove(); document.getElementById('tip').remove(); };
 </script>
 </body>
 </html>

@@ -284,7 +284,7 @@ it('fuses both looks instead of letting the second overwrite the first', async (
   const jev = createScriptedClient((req, n) => (n === 1
     ? { pick: choice({ e1: 0.55, e2: 0.05, none: 0.4 }, 0.53), exists: noulAnswer(0.6) }
     : { pick: choice({ e1: 0.24, e2: 0.49, none: 0.27 }, 0.23) }) as Record<string, Answer>);
-  const res = await groundByIntent({ jev }, model([el('e1', 'Павлодар', 'button'), el('e2', 'Где искать', 'button')]), { target: 'city', trial: true }, th, gctx);
+  const res = await groundByIntent({ jev }, model([el('e1', 'Павлодар', 'button'), el('e2', 'Город', 'button')]), { target: 'city', trial: true }, th, gctx);
   expect(res.ranked[0].ref).toBe('e1');
   expect(res.decision).toBe('try');
 });
@@ -461,7 +461,7 @@ export function hadEffect(before: PageModel, now: PageModel, el: ElementNode): b
 - Create: `fixtures/sites/filters.html`
 - Modify: `evals/run.ts`, `evals/cases/grounding.json`, `test/live/task.live.test.ts`, `README.md`, `skills/jev-browser/SKILL.md`, `src/mcp/main.ts` (INSTRUCTIONS: trials), `docs/index.html` only if it lists features.
 
-- [ ] **Step 1:** `filters.html` — a car-marketplace-like search: rows of `button.filter-button` (`Где искать | Алматы | Астана | Павлодар | ещё`; `Марка | Toyota | Hyundai | Kia | ещё`; `Модель | Camry | RAV4 | Corolla | ещё` shown after a brand is pressed), openers show a popup list with a search box; pressed chips get `aria-pressed="true"`; price inputs `от/до`; submit `Показать N объявлений` renders an in-page result list (price, year, link) with a sort control `Сортировать по: дате объявления` (menu: `цене, сначала дешевые`).
+- [ ] **Step 1:** `filters.html` — a car-marketplace-like search: rows of `button.filter-button` (`Город | Алматы | Астана | Павлодар | ещё`; `Марка | Toyota | Hyundai | Kia | ещё`; `Модель | Camry | RAV4 | Corolla | ещё` shown after a brand is pressed), openers show a popup list with a search box; pressed chips get `aria-pressed="true"`; price inputs `от/до`; submit `Показать N объявлений` renders an in-page result list (price, year, link) with a sort control `Сортировать по: дате объявления` (menu: `цене, сначала дешевые`).
 - [ ] **Step 2:** evals: cases may carry `param: { key, about, value }` instead of `target`; the intent comes from `paramIntent`. Add filters cases (city/brand/model chips, model before brand = opener, price textbox), flights textbox cases with values. Run `JEV_LIVE=1 node evals/run.ts`; accuracy must not drop below the previous report and new cases pass. Compare the long target wording with the short one (`the control that sets the {about} to "{value}"`) and keep the better.
 - [ ] **Step 3:** live e2e on `filters.html`: Camry in Павлодар, `select: min(price)`, zero questions.
 - [ ] **Step 4:** docs: README and SKILL.md describe trials (`confidence.trial`), scoped hints and what the agent sees in a ground question after tries.

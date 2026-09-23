@@ -38,7 +38,7 @@ describe('perception', () => {
   it('treats a tooltip on an empty dimmer as a blocking dialog', async () => {
     const page = await h.open('tutorial.html');
     const m = await observePage(page);
-    const cheap = find(m, (e) => e.name === 'Дешевые')!;
+    const cheap = find(m, (e) => e.name === 'Cheapest')!;
     expect(cheap.occluded).toBe(true);
     const tip = m.regions.find((r) => r.refs.includes(find(m, (e) => e.attrs.id === 'tip-close')!.ref))!;
     expect(tip).toMatchObject({ kind: 'dialog', blocking: true });

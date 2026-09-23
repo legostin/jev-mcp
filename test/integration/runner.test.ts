@@ -37,6 +37,8 @@ interface Script {
   ranks?: Array<[RegExp, Array<[RegExp, number]>]>;
   goalReached?: (req: EvaluateRequest) => number;
   actionClass?: string;
+  /** Fixed answers for noul questions by id (e.g. `same`). */
+  nouls?: Record<string, number>;
 }
 
 /** Scripted JEV: answers by question id with deterministic rules; records every request. */
@@ -92,6 +94,7 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
         let v = 0.05;
         if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same') v = 0.95;
         if (id === 'goal_reached') v = s.goalReached?.(req) ?? 0.05;
+        if (s.nouls?.[id] !== undefined) v = s.nouls[id];
         out[id] = { type: 'noul', noul: v };
       }
     }
@@ -177,7 +180,7 @@ describe('Task runner (scripted JEV, real browser)', () => {
       pageKind: () => 'search_form',
       targets: [],
       // The city opener leads for the brand, the Toyota chip is second: the city list lacks Toyota, so the trial fails.
-      ranks: [[/car brand/i, [[/"Где искать"/, 0.35], [/"Toyota"/, 0.3]]]],
+      ranks: [[/car brand/i, [[/"Город"/, 0.35], [/"Toyota"/, 0.3]]]],
       goalReached: (req) => (JSON.stringify(req.state).includes('Выбрано: Toyota') ? 0.95 : 0.05),
     });
     const task = makeTask({ goal: 'Show Toyota cars', params: { brand: { value: 'Toyota', about: 'car brand' } } }, page, jev);
@@ -188,7 +191,7 @@ describe('Task runner (scripted JEV, real browser)', () => {
     await task.start();
     expect(questions).toEqual([]);
     expect(task.state).toBe('done');
-    expect(steps.some((n) => /Где искать.*rolled back/.test(n))).toBe(true);
+    expect(steps.some((n) => /Город.*rolled back/.test(n))).toBe(true);
     expect(await page.evaluate('document.querySelector(".popup") === null')).toBe(true);
     expect(await page.evaluate('[...document.querySelectorAll("button[aria-pressed=true]")].map((b) => b.textContent).join()')).toBe('Toyota');
   });
@@ -200,6 +203,8 @@ describe('Task runner (scripted JEV, real browser)', () => {
       targets: [],
       ranks: [[/car model/i, [[/link "Toyota Camry"/, 0.9]]]],
       goalReached: (req) => (JSON.stringify(req.state).includes('Выбрано: Toyota, Camry') ? 0.95 : 0.05),
+      // JEV does not take "Toyota Camry" for the value itself: the navigation has to show it.
+      nouls: { same: 0.1 },
     });
     const task = makeTask({ goal: 'Show Toyota Camry cars', params: { model: { value: 'Camry', about: 'car model' } } }, page, jev);
     const questions: any[] = [];
@@ -211,6 +216,49 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(task.state).toBe('done');
     expect(steps.some((n) => /followed .*Toyota Camry.*now shows "Camry"/.test(n))).toBe(true);
     expect(await page.evaluate('location.search')).toContain('model=Camry');
+  });
+
+  it('presses a value button whose label is the value in another language', async () => {
+    const page = await h.open('filters.html');
+    const jev = scripted({
+      pageKind: () => 'search_form',
+      targets: [],
+      ranks: [[/city/i, [[/button "Павлодар"/, 0.9]]]],
+      goalReached: (req) => (JSON.stringify(req.state).includes('Выбрано: Павлодар') ? 0.95 : 0.05),
+    });
+    const task = makeTask({ goal: 'Show cars in Pavlodar', params: { city: { value: 'Pavlodar', about: 'city where the car is sold' } } }, page, jev);
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); task.answer(q.question_id, { type: 'abort' }); });
+    await task.start();
+    expect(questions).toEqual([]);
+    expect(task.state).toBe('done');
+    expect(jev.requests.some((r) => 'same' in r.questions)).toBe(true);
+    expect(await page.evaluate('[...document.querySelectorAll("button[aria-pressed=true]")].map((b) => b.textContent).join()')).toBe('Павлодар');
+  });
+
+  it('searches first when a filter exists only next to the results', async () => {
+    const page = await h.open('filters.html');
+    const jev = scripted({
+      pageKind: (req) => (JSON.stringify(req.state).includes('Результаты поиска') ? 'results_list' : 'search_form'),
+      targets: [[/submit/i, /Показать/]],
+      ranks: [[/car brand/i, [[/button "Toyota"/, 0.9]]], [/condition/i, [[/button "Новые"/, 0.9]]]],
+      goalReached: (req) => (JSON.stringify(req.state).includes('Состояние: Новые') ? 0.95 : 0.05),
+    });
+    const task = makeTask({
+      goal: 'Show new Toyota cars', params: { brand: { value: 'Toyota', about: 'car brand' }, condition: { value: 'Новые', about: 'item condition' } },
+    }, page, jev);
+    const questions: any[] = [];
+    const steps: string[] = [];
+    task.on('escalation', (q) => { questions.push(q); task.answer(q.question_id, { type: 'abort' }); });
+    task.on('step', (st) => steps.push(`${st.subintent}: ${st.note}`));
+    await task.start();
+    expect(questions).toEqual([]);
+    expect(task.state).toBe('done');
+    const order = steps.map((x) => x.split(':')[0]);
+    expect(order.indexOf('submit')).toBeGreaterThan(-1);
+    expect(order.indexOf('submit')).toBeLessThan(order.lastIndexOf('fill_param(condition)'));
+    expect(order).not.toContain('reveal(condition)');
+    expect(await page.evaluate('location.search')).toContain('condition=new');
   });
 
   it('asks for confirmation before an irreversible click even when JEV calls it harmless', async () => {

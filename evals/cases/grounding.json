@@ -60,7 +60,7 @@
    "fixture": "filters.html",
    "steps": [
     {
-     "click": "Где искать"
+     "click": "Город"
     }
    ]
   }
@@ -352,7 +352,7 @@
     "about": "city where the car is sold"
    },
    "expect": [
-    "Где искать",
+    "Город",
     "ещё"
    ]
   },

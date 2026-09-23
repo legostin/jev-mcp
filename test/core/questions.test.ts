@@ -103,7 +103,7 @@ describe('groundByIntent', () => {
     const jev = createScriptedClient((req, n) => (n === 1
       ? { pick: choice({ e1: 0.55, e2: 0.05, none: 0.4 }, 0.53), exists: noulAnswer(0.6) }
       : { pick: choice({ e1: 0.24, e2: 0.49, none: 0.27 }, 0.23) }) as Record<string, Answer>);
-    const res = await groundByIntent({ jev }, model([el('e1', 'Павлодар', 'button'), el('e2', 'Где искать', 'button')]), { target: 'city', trial: true }, th, gctx);
+    const res = await groundByIntent({ jev }, model([el('e1', 'Павлодар', 'button'), el('e2', 'Город', 'button')]), { target: 'city', trial: true }, th, gctx);
     expect(res.ranked[0].ref).toBe('e1');
     expect(res).toMatchObject({ ref: 'e1', decision: 'try' });
   });
