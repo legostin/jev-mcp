@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { DaemonBridge } from './client.ts';
 import { registerPageTools, type ToolDeps, type ToolResult } from './tools.ts';
-import { registerTaskTools } from './task-tools.ts';
+import { registerTaskTools, formatQuestion, formatResult } from './task-tools.ts';
 import { VERSION } from '../daemon/main.ts';
 
 export const INSTRUCTIONS = [
@@ -26,7 +26,19 @@ export async function runMcpServer(): Promise<void> {
   const deps: ToolDeps = { bridge, decorate: async (r: ToolResult) => r };
   registerPageTools(server, deps);
   registerTaskTools(server, deps);
+  // Claude Code channels: push questions and results into the session (ignored by clients without channel support).
+  let initialized = false;
+  const push = (content: string, meta: Record<string, string>) => {
+    if (!initialized) return;
+    server.server.notification({ method: 'notifications/claude/channel', params: { content, meta } }).catch(() => {});
+  };
+  bridge.onEvent((method, ev) => {
+    if (method !== 'task.event' || !ev?.channel) return;
+    if (ev.type === 'question') push(formatQuestion(ev.payload), { task_id: ev.task_id, question_id: ev.payload.question_id, kind: ev.payload.kind });
+    else if (ev.type === 'done') push(formatResult(ev.task_id, ev.payload), { task_id: ev.task_id, status: String(ev.payload?.status ?? 'done') });
+  });
   server.server.oninitialized = () => {
+    initialized = true;
     const info = server.server.getClientVersion();
     if (info?.name) bridge.clientName = info.name;
     // Connect eagerly so events (questions) can flow before the first tool call.
