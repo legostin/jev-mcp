@@ -153,3 +153,12 @@ describe('value labels in grounding', () => {
     expect(jev.requests).toHaveLength(1);
   });
 });
+
+describe('param candidates', () => {
+  it('admit links only when they show the value', async () => {
+    const { candidateElements } = await import('../../src/core/questions/templates/ground.ts');
+    const els = [el('e1', 'Toyota Camry', 'link'), el('e2', 'Новости', 'link'), el('e3', 'Модель', 'button')];
+    const refs = candidateElements(model(els), { target: 'x', kinds: ['button'], value: 'Camry', valueKinds: ['link'] }).map((e) => e.ref);
+    expect(refs).toEqual(['e1', 'e3']);
+  });
+});

@@ -193,6 +193,26 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(await page.evaluate('[...document.querySelectorAll("button[aria-pressed=true]")].map((b) => b.textContent).join()')).toBe('Toyota');
   });
 
+  it('counts a filter link that navigates to the value as setting it', async () => {
+    const page = await h.open('filters.html');
+    const jev = scripted({
+      pageKind: () => 'search_form',
+      targets: [],
+      ranks: [[/car model/i, [[/link "Toyota Camry"/, 0.9]]]],
+      goalReached: (req) => (JSON.stringify(req.state).includes('Выбрано: Toyota, Camry') ? 0.95 : 0.05),
+    });
+    const task = makeTask({ goal: 'Show Toyota Camry cars', params: { model: { value: 'Camry', about: 'car model' } } }, page, jev);
+    const questions: any[] = [];
+    const steps: string[] = [];
+    task.on('escalation', (q) => { questions.push(q); task.answer(q.question_id, { type: 'abort' }); });
+    task.on('step', (st) => steps.push(st.note));
+    await task.start();
+    expect(questions).toEqual([]);
+    expect(task.state).toBe('done');
+    expect(steps.some((n) => /followed .*Toyota Camry.*now shows "Camry"/.test(n))).toBe(true);
+    expect(await page.evaluate('location.search')).toContain('model=Camry');
+  });
+
   it('asks for confirmation before an irreversible click even when JEV calls it harmless', async () => {
     const page = await h.open('checkout.html?price=41230');
     const jev = scripted({

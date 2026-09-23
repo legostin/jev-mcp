@@ -44,6 +44,11 @@
     <p id="chosen"></p>
     <button type="submit" id="submit">Показать <span id="count">760</span> объявлений</button>
   </form>
+  <section class="popular">
+    <h2>Популярные модели</h2>
+    <a href="?brand=Toyota&amp;model=Camry">Toyota Camry</a> · <a href="?brand=Toyota&amp;model=RAV4">Toyota RAV4</a> ·
+    <a href="?brand=Hyundai&amp;model=Tucson">Hyundai Tucson</a> · <a href="?brand=Kia&amp;model=Sportage">Kia Sportage</a>
+  </section>
   <section id="results" hidden>
     <h2>Результаты поиска</h2>
     <div class="sort">Сортировать по: <span class="sort-trigger" role="button" tabindex="0" id="sort-trigger">дате объявления</span></div>
@@ -213,8 +218,13 @@ document.getElementById('sort-trigger').addEventListener('click', (e) => {
 });
 
 document.addEventListener('click', () => closePopup());
+// Filters travel in the address: a filter link or a reload shows the same selection and results.
+const initial = new URLSearchParams(location.search);
+for (const k of ['city', 'brand', 'model']) if (initial.get(k)) state[k] = initial.get(k);
+if (initial.get('sort_by')) state.sort = initial.get('sort_by');
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePopup(); });
 render();
+if ([...initial.keys()].length) renderResults();
 </script>
 </body>
 </html>

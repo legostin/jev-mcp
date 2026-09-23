@@ -102,6 +102,14 @@ type TaskEvents = {
   done: TaskResult;
 };
 
+/** Does the page's address or title carry the value (a filter applied by navigation)? */
+function pageShowsValue(model: PageModel, want: string): boolean {
+  let url = model.url;
+  try { url = decodeURIComponent(url); } catch { /* keep raw */ }
+  const hay = normalizeText(`${url.replace(/[-_+/?=&.]+/g, ' ')} ${model.title}`);
+  return want.length >= 2 && hay.includes(want);
+}
+
 /**
  * A JEV-driven browser task. Code owns the loop and the rules; JEV answers narrow questions (page kind,
  * which element, which suggestion, did it work); the main agent is asked only when JEV is not confident.
@@ -1071,6 +1079,16 @@ export class Task extends Emitter<TaskEvents> {
     await this.click(trigger);
     await this.settle();
     const opened = await this.observe(false);
+    if (opened.url !== model.url) {
+      // A filter link ("Toyota Camry" → /cars/toyota/camry/): the navigation itself applies the value.
+      if (pageShowsValue(opened, want)) {
+        this.status[k] = 'done';
+        this.dirty = true;
+        this.settleGrounding(true);
+        return { outcome: 'ok', note: `followed ${trigger.ref} "${trigger.name}" for ${k}; the page now shows "${String(p.value)}"`, action: { type: 'click', ref: trigger.ref, param: k } };
+      }
+      if (trial) return this.trialFailed(sub, trigger, model, 'it opened a page without the value');
+    }
     const options = this.revealedOptions(model, opened, opened.elements.get(trigger.ref) ?? trigger).slice(0, 60);
     if (!options.length) {
       if (trial) return this.trialFailed(sub, trigger, model, 'no options appeared');
@@ -1091,7 +1109,11 @@ export class Task extends Emitter<TaskEvents> {
           candidates: topCandidates(pick, 5, ['none']).map((c) => ({ ref: c.key, p: c.p, desc: describeElement(opened.elements.get(c.key)!) })) },
         answer_with: ['pick', 'none', 'set_param', 'skip', 'abort'],
       });
-      if (ans.type !== 'pick') { await (await this.page()).press('Escape'); return { outcome: ans.type === 'skip' ? 'skipped' : 'retry', note: `no option chosen for ${k}` }; }
+      if (ans.type !== 'pick') {
+        await (await this.page()).press('Escape');
+        if (ans.type === 'skip') this.status[k] = 'skipped';
+        return { outcome: ans.type === 'skip' ? 'skipped' : 'retry', note: `no option chosen for ${k}` };
+      }
       ref = ans.ref;
     }
     const opt = opened.elements.get(ref);

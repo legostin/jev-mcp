@@ -44,7 +44,7 @@ export function paramIntent(key: string, p: ParamSpec): Intent {
     fallback: `the field, or the button that opens the list of choices, where the ${about} is entered or picked`,
     value: valueText(p.value),
     // Values come as chips, options, menu items, radios, checkboxes or filter links as often as fields.
-    kinds: ['textbox', 'combobox', 'select', 'clickable', 'button', 'option', 'menuitem', 'radio', 'checkbox', 'link', 'tab'], trial: true,
+    kinds: ['textbox', 'combobox', 'select', 'clickable', 'button', 'option', 'menuitem', 'radio', 'checkbox'], valueKinds: ['link', 'tab'], trial: true,
   };
 }
 

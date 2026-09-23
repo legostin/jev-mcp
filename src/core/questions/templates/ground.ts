@@ -30,6 +30,8 @@ export interface Intent {
   fallback?: string;
   /** The value being set: a leader whose visible label is exactly this value needs no second look. */
   value?: string;
+  /** Kinds admitted only when their label contains `value` (filter links), so navigation links do not flood the pool. */
+  valueKinds?: ElementKind[];
 }
 
 export interface GroundCandidate { ref: string; p: number; desc: string }
@@ -76,8 +78,9 @@ export function candidateElements(model: PageModel, intent: Intent): ElementNode
   const kinds = new Set(intent.kinds ?? INTERACTIVE_KINDS);
   const regionIds = intent.regionId ? regionAndDescendants(model, intent.regionId) : null;
   const out: ElementNode[] = [];
+  const want = intent.value ? normalizeLabel(intent.value) : '';
   for (const e of model.elements.values()) {
-    if (!kinds.has(e.kind)) continue;
+    if (!kinds.has(e.kind) && !(want && intent.valueKinds?.includes(e.kind) && normalizeLabel(`${e.name} ${e.text ?? ''}`).includes(want))) continue;
     if (!e.visible) continue;
     // Visually hidden helpers (1-5 px native selects behind custom widgets) are never the target.
     if ((e.rect.w < 6 || e.rect.h < 6) && e.kind !== 'checkbox' && e.kind !== 'radio') continue;
