@@ -57,7 +57,11 @@ step 7 results           the sorted list goes to the agent (or, with extract "co
 ```
 
 - **Grounding eval.** 58 labelled cases over 10 fixture sites cover distractor fields, unlabeled inputs, shadow DOM, cross-origin iframes, "not on this page" cases and param steps: filter chips, values that exist only inside dropdown lists, price fields. Top-1 accuracy is **100%**, median decision time 0.44 s, and the confidence is well calibrated (expected calibration error **0.05**).
-- **Filter pages without questions.** On a car-marketplace filters fixture (value chips, dropdown lists, sorting), "cheapest Toyota Camry in Павлодар" (chips) and "cheapest Lexus RX 350 in Караганда" (values only in dropdowns) each finish in 6 steps, 16 JEV calls and 0 questions to the agent.
+- **Filter pages without questions.** On a car-marketplace filters fixture (value chips, dropdown lists, sorting), "cheapest Toyota Camry in Павлодар" (chips) and "cheapest Lexus RX 350 in Караганда" (values only in dropdowns) each finish in 6 steps, about 17 JEV calls and 0 questions; the sorted list, with cheaper accessories on top, goes to the agent.
+- **Live international sites** (jev's own Chrome, first runs, no hints):
+  - a code-hosting repository search, "most starred repository for a query": query, search, the site's "sort by stars", 10 results handed over: 4 steps, 7 JEV calls, 0 questions, 10 s;
+  - a news aggregator's search, "most popular story about a topic from the past month": the date range picked in a custom dropdown, 30 results handed over: 5 steps, 12 JEV calls, 0 questions, 17 s;
+  - a large marketplace that chose a Russian UI by itself, "cheapest new pair of given headphones": search first, then the "New" condition filter on the results page ("Новый" matched to "New"), price sorting, the list of parts and headphones handed over for the agent to tell apart: 6 steps, 12 JEV calls, 0 questions.
 
 <p align="center"><img src="docs/assets/ui-timeline.png" alt="jev-mcp debug UI: task timeline with JEV probability bars, confidence thresholds, screenshots and TypeSafe playground links" width="860"></p>
 

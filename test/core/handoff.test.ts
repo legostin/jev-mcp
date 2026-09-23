@@ -54,6 +54,15 @@ describe('results handoff', () => {
     expect(listItems(big, big.regions[0]).map((l) => l.text)).toEqual(['Car 0 | 9 000 ₸', 'Car 1 | 1 150 000 ₸', 'Car 2 | 1 250 000 ₸', 'Car 3 | 1 350 000 ₸', 'Car 4 | 1 450 000 ₸']);
   });
 
+  it('drops tag chips before values when a line is too long', () => {
+    const tags = ['productivity', 'crawler', 'scraper', 'automation', 'agents', 'python', 'chrome', 'testing', 'mcp', 'ai', 'llm', 'cli'];
+    const m = page([el('t', 'link', 'owner/repo', '/owner/repo'), el('d', 'text', 'A long description of the project '.repeat(6)),
+      ...tags.map((t, i) => el(`g${i}`, 'link', t, `/topics/${t}`)), el('s', 'text', '31.6k'), el('u', 'text', 'Updated yesterday')], [[]]);
+    const text = itemLine(m, ['t', 'd', ...tags.map((_, i) => `g${i}`), 's', 'u']).text;
+    expect(text).toContain('31.6k');
+    expect(text.length).toBeLessThanOrEqual(260);
+  });
+
   it('stops at the token budget', () => {
     const els = Array.from({ length: 100 }, (_, i) => el(`e${i}`, 'text', `Item number ${i} with a fairly long description of the product and its seller`));
     const items = listItems(page(els, els.map((e) => [e.ref])), { id: 'r1', kind: 'list', label: '', refs: [], items: els.map((e) => [e.ref]) } as any, 300);

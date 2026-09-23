@@ -103,7 +103,14 @@ function line(segs: Segment[], bp: { labels: Set<string>; tails: RegExp[] }, max
     for (const re of bp.tails) text = text.replace(re, '');
     if (text.trim().length >= 2) kept.push({ ...s, text: text.trim() });
   }
-  const text = dedupe(kept).map((s) => s.text).join(' | ');
+  // Long descriptions are cut; when the line is still too long, tag-like chips (short, no digits) go first:
+  // numbers carry the values the agent compares (prices, stars, dates).
+  const parts = dedupe(kept).map((p, i) => (i > 0 && p.text.length > 120 ? { ...p, text: `${p.text.slice(0, 119)}…` } : p));
+  const joined = () => parts.map((p) => p.text).join(' | ');
+  for (let i = parts.length - 1; i >= 1 && joined().length > max; i--) {
+    if (!/\d/.test(parts[i].text) && words(parts[i].text).length <= 2) parts.splice(i, 1);
+  }
+  const text = joined();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
