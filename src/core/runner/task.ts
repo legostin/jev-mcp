@@ -1145,6 +1145,14 @@ export class Task extends Emitter<TaskEvents> {
     const k = sub.key;
     const p = this.params[k];
     const want = normalizeText(String(p.value));
+    const opensList = trigger.kind === 'combobox' || trigger.states.expanded !== undefined || !!trigger.attrs['aria-haspopup']
+      || !!trigger.hints?.some((h) => /dropdown|select/.test(h));
+    if (opensList && (isValueLabel(trigger.name, want) || showsValue(trigger, want))) {
+      // A dropdown that already shows the value ("Stories ▾" for type = Stories): nothing to do.
+      this.status[k] = 'done';
+      this.settleGrounding(true);
+      return { outcome: 'ok', note: `${k} already set in ${trigger.ref} "${trigger.name}"` };
+    }
     if (isValueLabel(trigger.name, want) || isValueLabel(trigger.text ?? '', want) || await this.standsForValue(sub, trigger)) {
       // A quick-select button that IS the value ("Павлодар", "Toyota"): press it unless it is already on.
       if (!trigger.states.selected && !trigger.states.checked) {
