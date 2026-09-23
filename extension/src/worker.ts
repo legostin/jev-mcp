@@ -46,7 +46,8 @@ async function connect(): Promise<void> {
     for (const tabId of [...attached]) chrome.debugger.detach({ tabId }).catch(() => {});
     attached.clear();
     setTimeout(() => { void connect(); }, backoff);
-    backoff = Math.min(backoff * 2, 15_000);
+    // Reconnecting to localhost is cheap: keep the gap short so a restarted daemon sees the extension quickly.
+    backoff = Math.min(backoff * 2, 5_000);
   };
   socket.onerror = () => {};
 }

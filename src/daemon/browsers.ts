@@ -92,7 +92,9 @@ export class BrowserManager {
   async driver(kind: DriverKind | 'auto' = this.getConfig().driver.default): Promise<BrowserDriver> {
     let d: BrowserDriver;
     const justStarted = Date.now() - this.startedAt < 15_000;
-    if (!this.extensionDriver?.connected && (kind === 'extension' || (kind === 'auto' && justStarted && this.extensionPaired()))) await this.waitForExtension(5_000);
+    // An explicit request waits through a whole reconnect cycle of the extension; "auto" waits briefly after a start.
+    if (!this.extensionDriver?.connected && kind === 'extension') await this.waitForExtension(16_000);
+    else if (!this.extensionDriver?.connected && kind === 'auto' && justStarted && this.extensionPaired()) await this.waitForExtension(5_000);
     if (kind === 'extension' || (kind === 'auto' && this.extensionConnected)) {
       if (this.extensionDriver?.connected) d = this.extensionDriver;
       else if (kind === 'extension') throw new RpcError(ERR.browser, 'The jev Chrome extension is not connected. Load it and pair it (jev pair), or use driver "chromium".');
