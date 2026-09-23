@@ -47,9 +47,9 @@ describe('secrets and domains', () => {
       .toEqual({ a: ['typed [secret] into e3'], b: { c: '[secret]' }, d: 'Almaty' });
   });
   it('matches allowed domains including subdomains', () => {
-    expect(domainAllowed('https://www.aviasales.kz/search', ['aviasales.kz'])).toBe(true);
-    expect(domainAllowed('https://pay.aviasales.kz/', ['aviasales.kz'])).toBe(true);
-    expect(domainAllowed('https://evil.example/', ['aviasales.kz'])).toBe(false);
+    expect(domainAllowed('https://www.flights.example/search', ['flights.example'])).toBe(true);
+    expect(domainAllowed('https://pay.flights.example/', ['flights.example'])).toBe(true);
+    expect(domainAllowed('https://evil.example/', ['flights.example'])).toBe(false);
     expect(domainAllowed('https://evil.example/', [])).toBe(true);
   });
 });

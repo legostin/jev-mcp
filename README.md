@@ -56,15 +56,7 @@ step 6-8 extract         read 30 results across "show more" pages, selected min(
 ```
 
 - **Grounding eval.** 58 labelled cases over 10 fixture sites cover distractor fields, unlabeled inputs, shadow DOM, cross-origin iframes, "not on this page" cases and param steps: filter chips, values that exist only inside dropdown lists, price fields. Top-1 accuracy is **100%**, median decision time 0.44 s, and the confidence is well calibrated (expected calibration error **0.05**).
-- **Filter pages without questions.** On a kolesa-like filters fixture, "cheapest Toyota Camry in Павлодар" (chips) and "cheapest Lexus RX 350 in Караганда" (values only in dropdowns) each finish in 6 steps, 16 JEV calls and 0 questions to the agent.
-- **Live aviasales.kz, headless Chrome.** JEV went through the real site:
-  - accepted the consent banner;
-  - noticed the origin was already prefilled;
-  - picked the destination from the autocomplete;
-  - chose the cheapest October day in the site's low-fare calendar;
-  - submitted the search and followed the results into the new tab the site opened.
-
-  The results page then showed a reCAPTCHA to the headless browser. jev-mcp recognises it and asks the agent to have a person solve it: use the extension driver or a visible browser for sites like this.
+- **Filter pages without questions.** On a car-marketplace filters fixture (value chips, dropdown lists, sorting), "cheapest Toyota Camry in Павлодар" (chips) and "cheapest Lexus RX 350 in Караганда" (values only in dropdowns) each finish in 6 steps, 16 JEV calls and 0 questions to the agent.
 
 <p align="center"><img src="docs/assets/ui-timeline.png" alt="jev-mcp debug UI: task timeline with JEV probability bars, confidence thresholds, screenshots and TypeSafe playground links" width="860"></p>
 
@@ -129,7 +121,7 @@ You never start the daemon yourself. The first MCP call or `jev` command starts 
 
 `jev install` registers the server as `claude mcp add -s user jev-browser -- node <repo>/bin/jev.mjs mcp`. It becomes available in **new** Claude Code sessions; check it with `claude mcp list`. Then ask Claude:
 
-> Find the cheapest flight from Almaty to Antalya in October on aviasales.kz
+> Find the cheapest flight from Almaty to Antalya in October
 
 Claude calls `jev_task` and keeps working while JEV runs. Questions from JEV reach Claude in three ways:
 
@@ -195,7 +187,7 @@ Example task:
 ```json
 {
   "goal": "Find the cheapest flight ticket from Almaty to Antalya departing in October 2026",
-  "site": "https://www.aviasales.kz",
+  "site": "https://flights.example.com",
   "params": {
     "from":   { "value": "Алматы",  "about": "departure city" },
     "to":     { "value": "Анталия", "about": "destination city" },

@@ -13,7 +13,8 @@ if (!process.argv.includes('--headful')) process.env.JEV_HEADLESS = '1';
 mkdirSync(join(home, 'config'), { recursive: true });
 writeFileSync(join(home, 'config', 'config.json'), JSON.stringify({ provider: real.provider, providers: real.providers, trace: { screenshots: true } }));
 const siteArg = process.argv.indexOf('--site');
-const site = siteArg > 0 ? process.argv[siteArg + 1] : 'https://www.aviasales.kz/';
+const site = siteArg > 0 ? process.argv[siteArg + 1] : '';
+if (!site) { console.error('usage: node scripts/acceptance.ts --site <flight search url> [--headful]'); process.exit(2); }
 
 const { startDaemon } = await import('../src/daemon/main.ts');
 const { registerStage2 } = await import('../src/daemon/extend.ts');

@@ -250,7 +250,7 @@ Mechanics:
 **Files:** `fixtures/sites/{server.ts,flights.html,results.html,cookie.html,modal.html,iframe-outer.html,iframe-inner.html,shadow.html,login.html,checkout.html,calendar.html,autocomplete.html,labels.html}`, `test/integration/fixtures.test.ts`
 
 - [ ] `server.ts`: `startFixtureServer(): Promise<{ url(path): string; crossUrl(path): string; close() }>` serves `fixtures/sites` on two random ports (the second is "cross-origin"). Also `/api/suggest?q=` (city autocomplete JSON with 150 ms delay) and `/api/flights?from&to&month` (deterministic 30 results, paginated by 10 with a "Show more" button).
-- [ ] `flights.html`: a Russian-labelled search form mimicking aviasales:
+- [ ] `flights.html`: a Russian-labelled flight search form:
   - fields «Откуда»/«Куда» as custom comboboxes with an autocomplete popup (no labels, placeholder only on one, nearby text on the other);
   - a date field opening a custom calendar grid (buttons with `aria-label="14 октября 2026"`) with month navigation;
   - a passengers popover; a «Найти билеты» button;
@@ -659,7 +659,7 @@ The weight starts at 1, +0.5 per success (max 5), −1 per failure; disabled aft
 - [ ] Put the provided OpenRouter key into the user config via `jev settings set providers.openrouter.apiKey -` (stdin). Never commit it.
 - [ ] Run `npm test`, `JEV_LIVE=1 npm run test:live`, `JEV_LIVE=1 npm run eval`; record the results.
 - [ ] `jev install` for real; verify `claude mcp list` shows jev-browser connected; build the extension.
-- [ ] Live acceptance: run the spec §1 aviasales task through the daemon with the chromium driver (headful); record the result, the escalations and the trace link.
+- [ ] Live acceptance: run the spec §1 flight search task through the daemon with the chromium driver (headful); record the result, the escalations and the trace link.
 - [ ] Commit `docs: README and acceptance notes`.
 
 ---

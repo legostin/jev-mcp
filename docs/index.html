@@ -127,7 +127,7 @@
 
   <section>
     <h2>Measured results</h2>
-    <p>On the airline-search fixture (Russian UI, consent wall, autocomplete, low-fare calendar, pagination), the task "cheapest flight Almaty → Antalya in October" finished in <strong>8 steps, 24 JEV calls, 0 questions, $0.0019, 19 s</strong>. The grounding eval scored <strong>41/41 (100%)</strong> with an expected calibration error of <strong>0.02</strong>. On live aviasales.kz, JEV went through consent, autocomplete, the low-fare calendar and a results tab that opened separately.</p>
+    <p>On the airline-search fixture (Russian UI, consent wall, autocomplete, low-fare calendar, pagination), the task "cheapest flight Almaty → Antalya in October" finished in <strong>8 steps, 24 JEV calls, 0 questions, $0.0019, 19 s</strong>. The grounding eval scored <strong>58/58 (100%)</strong> with an expected calibration error of <strong>0.05</strong>.</p>
     <img class="shot" src="assets/ui-timeline.png" alt="jev-mcp debug UI: step timeline with JEV probability bars and confidence thresholds" loading="lazy">
   </section>
 
@@ -139,7 +139,7 @@ node bin/jev.mjs install                       # Claude Code + Codex MCP, skill,
 jev settings set providers.openrouter.apiKey - # paste the key, Enter, Ctrl-D (or: jev settings set provider typesafe)
 jev doctor</code></pre>
     <p><strong>Use your own Chrome</strong> (recommended for sites with logins or bot checks): load <code>dist/extension</code> (or the zip from <a href="https://github.com/legostin/jev-mcp/releases">Releases</a>) with <em>Load unpacked</em> in <code>chrome://extensions</code>, run <code>jev pair</code> and enter the code in the JEV side panel.</p>
-    <p>Then ask your agent: <em>"Find the cheapest flight from Almaty to Antalya in October on aviasales.kz"</em>. It calls <code>jev_task</code> and keeps working while JEV runs. Questions arrive through Claude Code channels, <code>jev watch</code>, or appended to any jev tool result. See the <a href="https://github.com/legostin/jev-mcp#troubleshooting">troubleshooting guide</a>.</p>
+    <p>Then ask your agent: <em>"Find the cheapest flight from Almaty to Antalya in October"</em>. It calls <code>jev_task</code> and keeps working while JEV runs. Questions arrive through Claude Code channels, <code>jev watch</code>, or appended to any jev tool result. See the <a href="https://github.com/legostin/jev-mcp#troubleshooting">troubleshooting guide</a>.</p>
   </section>
 
   <section>

@@ -31,7 +31,7 @@ JEV is a *System One* model. It makes typed decisions (which element, which opti
 ```json
 {
   "goal": "Find the cheapest flight ticket from Almaty to Antalya departing in October 2026",
-  "site": "https://www.aviasales.kz",
+  "site": "https://flights.example.com",
   "params": {
     "from":   { "value": "Алматы",  "about": "departure city" },
     "to":     { "value": "Анталья", "about": "destination city" },

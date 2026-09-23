@@ -129,7 +129,7 @@ $('.swap').addEventListener('click', () => {
   [a.value, b.value] = [b.value, a.value]; [a.dataset.code, b.dataset.code] = [b.dataset.code, a.dataset.code];
 });
 
-// Calendar with the cheapest fare per day, like aviasales' low-price calendar.
+// Calendar with the cheapest fare per day, like the low-fare calendars of flight search sites.
 async function renderCalendar(host) {
   closePopup();
   const box = document.createElement('div');
@@ -194,7 +194,7 @@ $('#search').addEventListener('submit', (e) => {
   if (err.length) return;
   const results = `results.html?from=${from}&to=${to}&date=${state.date}`;
   if (new URLSearchParams(location.search).get('newtab') === '1') {
-    // Like aviasales with "open hotels in a new tab": results open in a new tab, this tab goes to hotels.
+    // Some flight sites open results in a new tab and send this tab to a hotels offer: mimic that.
     window.open(results, '_blank');
     location.href = 'hotels.html';
     return;

@@ -17,7 +17,7 @@ MCP-инструмент, через который основной агент 
 
 ### Критерии успеха
 
-1. Сценарий «найди самый дешёвый билет Алматы → Анталия на октябрь на aviasales» проходит от начала до конца,
+1. Сценарий «найди самый дешёвый билет Алматы → Анталия на октябрь на сайте поиска авиабилетов» проходит от начала до конца,
    с результатом по схеме и не более чем 2 эскалациями на первом прогоне (0 на повторном, благодаря памяти сайта).
 2. Eval-набор привязки к элементам: top-1 точность ≥ 90% среди решений, принятых выше порога `act`
    в пресете `balanced`, на фикстурах и сохранённых снимках реальных сайтов.
@@ -323,7 +323,7 @@ Skill рекомендует основному агенту писать `goal`
 ```jsonc
 {
   "goal": "Find the cheapest ticket",
-  "site": "https://aviasales.kz",                     // или "tab": "<id>" | "current"
+  "site": "https://flights.example.com",                     // или "tab": "<id>" | "current"
   "params": {
     "from":   { "value": "Алматы",  "about": "departure city" },
     "to":     { "value": "Анталия", "about": "destination city" },
@@ -334,7 +334,7 @@ Skill рекомендует основному агенту писать `goal`
               "select": "min(price)" },               // min | max | first | all
   "hints": ["…"],
   "policy": { "confidence": { "preset": "balanced" }, "irreversible": "ask",
-              "allowed_domains": ["aviasales.kz"], "max_steps": 60, "max_minutes": 15, "budget_usd": 0.2,
+              "allowed_domains": ["flights.example.com"], "max_steps": 60, "max_minutes": 15, "budget_usd": 0.2,
               "max_items": 200 },
   "driver": "extension"                               // extension | chromium; headless для chromium
 }
@@ -542,7 +542,7 @@ Skill рекомендует основному агенту писать `goal`
   "failover": false,
   "rateLimit": { "requestsPerMinute": 1200, "tokensPerSecond": 250000 },
   "confidence": { "preset": "balanced", "overrides": { "ground.choice": { "act": 0.8, "escalate": 0.4 } } },
-  "domains": { "aviasales.kz": { "confidence": { "preset": "autonomous" }, "irreversible": "ask" } },
+  "domains": { "flights.example.com": { "confidence": { "preset": "autonomous" }, "irreversible": "ask" } },
   "driver": { "default": "extension", "extensionPort": 47913,
               "chromium": { "headless": false, "executable": null, "profileDir": null } },
   "notify": { "channel": true, "piggyback": true },
@@ -590,7 +590,7 @@ Skill рекомендует основному агенту писать `goal`
   Прогон на живом JEV считает точность и калибровку по шаблонам и перебирает пороги.
   Любое изменение шаблона вопроса требует прогона eval.
 - **Расширение:** Chromium с загруженным unpacked-расширением; сопряжение, реле CDP, пауза при перехвате управления.
-- **Ручной приёмочный сценарий:** aviasales из раздела 1.
+- **Ручной приёмочный сценарий:** поиск авиабилетов из раздела 1.
 
 ## 14. Этапы поставки
 
