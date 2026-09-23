@@ -74,6 +74,8 @@ Answer with `jev_answer`. Look first (`jev_observe`, `jev_screenshot`) when the 
 | `risk_confirm` (pay, order, send, delete…) | `continue` only if the user explicitly asked for this action; otherwise `skip` or `abort` |
 | `blocker`: CAPTCHA or bot check | Ask the user to solve it in the visible browser, then answer `continue`. If the context says `headless: true`, nobody can solve it: `abort` and rerun the task with `driver: "extension"`, or with jev's Chrome after `jev_settings set driver.chromium.headless false`. |
 | `blocker`: login wall | Ask the user to sign in in that tab (or pass credentials as secret params in a new task), then `continue` |
+| `blocker`: site keeps showing errors | A reload and a step back did not help: the site may be limiting automated browsing. Retry later, or `abort` and rerun with `driver: "extension"`. |
+| `assess`: the search found nothing | `set_param` with a broader value, give a `hint`, or `continue` to read the page anyway. |
 | `stuck` | Observe or take a screenshot, then send a `hint`; or act yourself with `jev_act` and answer `continue`; or `abort` |
 
 Do not answer `continue` to a blocker you have not resolved: the task will only ask again.
