@@ -62,7 +62,7 @@ async function pickList(ctx: QuestionContext, model: PageModel, goal: string, bu
   }
   const questions: Record<string, Question> = {};
   for (const r of lists) questions[`is_results_${r.id}`] = { type: 'noul', instructions: `Is \`lists.${r.id}\` a list of results for \`goal\`?` };
-  const res = askFields.length ? await runQuestions(ctx, { template: 'extract.is_item', state: buildState({ goal, extra: { lists: regions as unknown as Json } }, budget), questions });
+  const res = await runQuestions(ctx, { template: 'extract.is_item', state: buildState({ goal, extra: { lists: regions as unknown as Json } }, budget), questions });
   callIds.push(res.callId); cost.v += res.costUsd;
   let best: Region | null = null;
   let bestP = 0.5;
@@ -119,7 +119,7 @@ export async function extractResults(
       questions[`f_${i}_${f}`] = { type: 'choice', instructions: `Which entry of \`items.i${i}\` is the \`fields.${f}\` of this item?`, criteria };
     }
   }
-  const res = await runQuestions(ctx, {
+  const res = askFields.length ? await runQuestions(ctx, {
     template: 'extract.field',
     state: buildState({ goal: opts.goal, extra: { fields: fieldsDesc as unknown as Json, items: itemsState as unknown as Json } }, Math.max(opts.budgetTokens, 8000)),
     questions,
