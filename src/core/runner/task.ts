@@ -1092,7 +1092,11 @@ export class Task extends Emitter<TaskEvents> {
       return { outcome: 'ok', note: `selected ${k} in ${el.ref} "${el.name}"`, action: { type: 'select', ref: el.ref } };
     }
     // Anything clickable is either the value itself (a chip, option, filter link) or the trigger of a list of values.
-    if (['clickable', 'button', 'option', 'menuitem', 'radio', 'checkbox', 'link', 'tab'].includes(el.kind)) return this.pickFromDropdown(sub, el, before, trial);
+    // A combobox that is not a text input (a div or button with role combobox) is a dropdown, not a field to type in.
+    const typable = el.tag === 'input' || el.tag === 'textarea' || el.attrs.contenteditable === 'true';
+    if (['clickable', 'button', 'option', 'menuitem', 'radio', 'checkbox', 'link', 'tab'].includes(el.kind) || (el.kind === 'combobox' && !typable)) {
+      return this.pickFromDropdown(sub, el, before, trial);
+    }
     if (fieldHoldsValue(el, p)) {
       this.status[k] = 'done';
       return { outcome: 'ok', note: `${k} already filled in ${el.ref}` };

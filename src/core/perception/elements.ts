@@ -62,7 +62,7 @@ const WIDGET_ROLES = new Set([
 const KEPT_ATTRS = [
   'id', 'name', 'type', 'placeholder', 'aria-label', 'title', 'role', 'href', 'data-testid', 'data-test', 'data-qa',
   'autocomplete', 'aria-controls', 'aria-haspopup', 'aria-expanded', 'aria-autocomplete', 'for', 'value', 'data-date',
-  'action', 'inputmode', 'list', 'class',
+  'action', 'inputmode', 'list', 'class', 'contenteditable',
 ];
 const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 const LANDMARKS = new Set(['header', 'footer', 'nav', 'main', 'aside', 'form', 'section', 'article', 'dialog', 'fieldset']);
