@@ -586,7 +586,7 @@ export class Task extends Emitter<TaskEvents> {
       return { type: 'dismiss_overlay', region: r.id, overlayKind: kind };
     }
     // Suggestions right after typing a param.
-    if (this.lastTypedKey && this.status[this.lastTypedKey] === 'typed' && this.popupOptions(model).length) {
+    if (this.lastTypedKey && this.lastSub?.type === 'fill_param' && this.status[this.lastTypedKey] !== 'skipped' && this.popupOptions(model).length) {
       return { type: 'pick_suggestion', key: this.lastTypedKey };
     }
     // An open calendar with a pending date param.
@@ -811,7 +811,9 @@ export class Task extends Emitter<TaskEvents> {
       const picked = await this.pickSuggestion(k, after);
       return { outcome: picked.outcome, note: `${note}; ${picked.note}`, action: { type: 'type', ref: el.ref, param: k, then: picked.action } };
     }
-    if (typedOk) this.status[k] = 'typed';
+    // No suggestions appeared after the page settled: the value is in. (Late suggestions or validation errors
+    // bring the param back: see the pick_suggestion rule and submit's validation handling.)
+    if (typedOk) this.status[k] = 'done';
     return { outcome: typedOk ? 'ok' : 'failed', note, action: { type: 'type', ref: el.ref, param: k } };
   }
 

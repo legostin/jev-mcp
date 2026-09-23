@@ -138,6 +138,8 @@ export function buildPageModel(raw: RawCapture, prev?: PageModel & Partial<Model
     ...regions.map((r) => r.sig),
     ...[...elements.values()].filter((e) => e.interactive && e.visible)
       .map((e) => `${e.sig}=${e.value ?? ''}|${e.states.checked ?? ''}|${e.states.expanded ?? ''}|${e.occluded}`),
+    // Visible text matters too: a status message or error appearing is a change of state.
+    ...[...elements.values()].filter((e) => !e.interactive && e.visible && e.inViewport).slice(0, 300).map((e) => e.name),
   ]);
 
   return {
