@@ -1,5 +1,6 @@
 import type { Json } from '../jev/types.ts';
 import { estimateTokens } from '../util/tokens.ts';
+import type { StepCard } from './step.ts';
 
 export type ParamValue = string | number | boolean | string[] | { from: string; to: string };
 
@@ -7,6 +8,8 @@ export interface ParamSpec { value: ParamValue; about?: string; secret?: boolean
 
 export interface StateParts {
   goal?: string;
+  /** The step being done (questions about one step get this instead of every param). */
+  step?: StepCard;
   params?: Record<string, ParamSpec>;
   hints?: string[];
   progress?: Record<string, string>;
@@ -44,6 +47,11 @@ export function buildState(parts: StateParts, budgetTokens: number): Json {
   const build = (p: StateParts): Record<string, Json> => {
     const s: Record<string, Json> = {};
     if (p.goal) s.goal = p.goal;
+    if (p.step) {
+      const st: Record<string, Json> = { do: p.step.do };
+      if (p.step.param) { st.about = p.step.param.about; st.value = p.step.param.value; }
+      s.step = st;
+    }
     const params = publicParams(p.params);
     if (params && Object.keys(params).length) s.params = params;
     if (p.hints?.length) s.hints = p.hints;

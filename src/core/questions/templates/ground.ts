@@ -17,6 +17,10 @@ export interface Intent {
   regionId?: string;
   /** Allow elements covered by an overlay (default true; the caller handles overlays). */
   allowOccluded?: boolean;
+  /** Reversible step: a leader below `act` may be tried and verified instead of asking (see `Thresholds.trial`). */
+  trial?: boolean;
+  /** Signatures of elements already tried and rolled back for this step. */
+  exclude?: string[];
 }
 
 export interface GroundCandidate { ref: string; p: number; desc: string }
