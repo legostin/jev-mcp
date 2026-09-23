@@ -215,7 +215,8 @@ function states(n: RawNode): ElementStates {
   else if (checked === false || checked === 'false') st.checked = false;
   const expanded = p.expanded ?? a['aria-expanded'];
   if (expanded !== undefined) st.expanded = bool(expanded);
-  if (bool(p.selected) || a['aria-selected'] === 'true') st.selected = true;
+  // Toggle buttons (aria-pressed) count as selected: a pressed filter chip is a chosen value.
+  if (bool(p.selected) || bool(p.pressed) || a['aria-selected'] === 'true' || a['aria-pressed'] === 'true') st.selected = true;
   if (bool(p.required) || a.required !== undefined || a['aria-required'] === 'true') st.required = true;
   if ((p.invalid && p.invalid !== 'false') || a['aria-invalid'] === 'true') st.invalid = true;
   if (bool(p.focused)) st.focused = true;

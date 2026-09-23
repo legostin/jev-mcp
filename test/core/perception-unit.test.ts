@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { normalizeId, normalizeName } from '../../src/core/perception/signature.ts';
 import { parseDateText, parseMonthText, monthFromWord } from '../../src/core/extract/dates.ts';
 import { findNearbyText } from '../../src/core/perception/naming.ts';
+import { renderCandidate } from '../../src/core/perception/render.ts';
 
 describe('signature normalization', () => {
   it('strips generated id suffixes and digits', () => {
@@ -44,5 +45,25 @@ describe('nearby text', () => {
     expect(findNearbyText(target, [far, above, left], () => true)?.text).toBe('Nickname');
     expect(findNearbyText(target, [far, above], () => true)?.text).toBe('Other');
     expect(findNearbyText(target, [far], () => true)).toBeNull();
+  });
+});
+
+describe('candidate cards', () => {
+  it('show the visual row and drop layout noise', () => {
+    const mk = (ref: string, name: string, x: number, y = 100) => ({
+      ref, sig: ref, kind: 'button', role: 'button', tag: 'button', name, nameSource: 'content', states: {}, interactive: true, visible: true,
+      inViewport: true, occluded: false, rect: { x, y, w: 80, h: 40 }, regionId: 'r1', backendNodeId: 1, attrs: { class: 'filter-button' }, order: x,
+    }) as any;
+    const els = [mk('e1', 'Модель', 0), mk('e2', 'Camry', 100), mk('e3', 'RAV4', 200), mk('e4', 'Цена', 0, 300)];
+    const model: any = {
+      url: 'http://x/', title: 't', elements: new Map(els.map((e) => [e.ref, e])),
+      regions: [{ id: 'r0', kind: 'page', label: '', refs: [] }, { id: 'r1', kind: 'form', label: 'Поиск', parentId: 'r0', refs: els.map((e) => e.ref) }],
+    };
+    const card = renderCandidate(model, 'e2');
+    expect(card).toContain('row: Модель | [Camry] | RAV4');
+    expect(card).toContain('in: r1 form "Поиск"');
+    expect(card).not.toContain('rect:');
+    expect(card).not.toContain('class=');
+    expect(card).not.toContain('Цена');
   });
 });

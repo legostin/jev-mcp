@@ -167,6 +167,46 @@ export function renderElement(model: PageModel, ref: string): string {
   return lines.join('\n');
 }
 
+const bare = (s: string, max = 40): string => (s.length > max ? s.slice(0, max - 1) + '…' : s);
+
+/** Visible elements of the same region whose vertical centre falls inside the element's height, left to right. */
+export function rowOf(model: PageModel, ref: string, max = 10): string[] {
+  const e = model.elements.get(ref);
+  const region = e && model.regions.find((r) => r.id === e.regionId);
+  if (!e || !region) return [];
+  const cy = e.rect.y + e.rect.h / 2;
+  const tol = Math.max(e.rect.h / 2, 8);
+  const row = region.refs.map((r) => model.elements.get(r))
+    .filter((x): x is ElementNode => !!x && x.visible && !!(x.name || x.text) && Math.abs(x.rect.y + x.rect.h / 2 - cy) <= tol)
+    .sort((a, b) => a.rect.x - b.rect.x);
+  const i = row.findIndex((x) => x.ref === ref);
+  const start = Math.max(0, Math.min(i - Math.floor(max / 2), row.length - max));
+  return row.slice(start, start + max).map((x) => {
+    const name = bare((x.name || x.text || '').trim());
+    return x.ref === ref ? `[${name}]` : name;
+  });
+}
+
+/**
+ * A candidate as JEV sees it on a second look: the element, the regions around it and the row it sits in
+ * ("Модель | [Camry] | RAV4" tells a value button from the field it belongs to). No layout or class noise.
+ */
+export function renderCandidate(model: PageModel, ref: string): string {
+  const e = model.elements.get(ref);
+  if (!e) return `Unknown element ${ref}`;
+  const chain: string[] = [];
+  for (let r = model.regions.find((x) => x.id === e.regionId); r && r.kind !== 'page'; r = model.regions.find((x) => x.id === r!.parentId)) {
+    chain.push(`${r.id} ${r.kind}${r.label ? ` ${q(r.label, 40)}` : ''}`);
+  }
+  const lines = [`${e.ref} ${describeElement(e, { pageUrl: model.url })}`];
+  if (chain.length) lines.push(`in: ${chain.join(' < ')}`);
+  if (e.text && e.text !== e.name) lines.push(`text: ${q(e.text, 160)}`);
+  if (e.options?.length) lines.push(`options: ${e.options.slice(0, 20).map((o) => `${o.selected ? '*' : ''}${q(o.label, 30)}`).join(', ')}`);
+  const row = rowOf(model, ref);
+  if (row.length > 1) lines.push(`row: ${row.join(' | ')}`);
+  return lines.join('\n');
+}
+
 export function renderDiff(diff: PageDiff, model: PageModel, maxLines = 20): string {
   const lines: string[] = [];
   if (diff.urlChanged) lines.push(`URL changed: ${model.url}`);
