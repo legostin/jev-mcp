@@ -12,6 +12,16 @@ describe('value parsers', () => {
   it('numbers', () => {
     expect(parseNumber('3 пересадки')).toBe(3);
     expect(parseNumber('rating 4.5')).toBe(4.5);
+    expect(parseNumber('31.6k')).toBe(31600);
+    expect(parseNumber('845')).toBe(845);
+    expect(parseNumber('1.2M downloads')).toBe(1200000);
+    expect(parseNumber('1,2 млн ₸')).toBe(1200000);
+    expect(parseNumber('15 тыс. просмотров')).toBe(15000);
+    expect(parseNumber('50 m²')).toBe(50);
+    expect(parseNumber('5 km')).toBe(5);
+    expect(parseNumber('3 комнаты')).toBe(3);
+    expect(parseNumber('рейтинг 4,5')).toBe(4.5);
+    expect(parseNumber('1,234')).toBe(1234);
     expect(parseNumber('no digits')).toBeNull();
   });
   it.each([['6ч 50м в пути', 410], ['5 ч 20 мин', 320], ['5h 20m', 320], ['1h', 60], ['45 min', 45], ['2 часа 5 минут', 125], ['1д 2ч', 1560]])('duration %s', (t, m) => {

@@ -144,18 +144,23 @@ function subtreeText(raw: RawCapture, info: NodeInfo[], idx: number, max = 300, 
     if (skip && i !== idx && skip(i)) return;
     const n = raw.nodes[i];
     if (n.nodeType === 3) {
-      const t = n.text?.trim();
-      if (t && info[i].visible && !info[i].ariaHidden) { parts.push(t); len += t.length + 1; }
+      // Keep the node's own spacing: "playwright_<em>mcp</em>" is one word, not "playwright_ mcp".
+      const t = n.text;
+      if (t && t.trim() && info[i].visible && !info[i].ariaHidden) { parts.push(t); len += t.length; }
       return;
     }
+    // Block boxes separate words; inline ones (highlights, links inside text) do not.
+    const block = n.nodeType === 1 && !(n.style?.display ?? '').startsWith('inline');
     if (n.nodeType === 1) {
       if (n.tag === 'script' || n.tag === 'style' || n.tag === 'noscript' || n.tag === 'template') return;
       if (n.style && (n.style.display === 'none' || n.style.visibility !== 'visible')) return;
+      if (block || n.tag === 'br') parts.push(' ');
     }
     for (const c of n.children) walk(c);
+    if (block) parts.push(' ');
   };
   walk(idx);
-  return cleanText(parts.join(' '), max);
+  return cleanText(parts.join(''), max);
 }
 
 function ownText(raw: RawCapture, idx: number): string {

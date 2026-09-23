@@ -14,10 +14,20 @@ const CURRENCY: Array<[RegExp, string]> = [
   [/¥|\bJPY\b|\bCNY\b/i, 'JPY'],
 ];
 
-/** Parses "41 230", "1,234.56", "1 234,56", "1.234.567" into a number. */
+// Magnitude suffixes right after a number ("31.6k" stars, "1,2 млн ₸"). Lower-case "m" is not one: "50 m²".
+const MAGNITUDE: Array<[RegExp, number]> = [
+  [/^\s?(?:k|к|тыс\.?)(?![\p{L}])/iu, 1e3],
+  [/^\s?(?:M|mln|млн\.?)(?![\p{L}])/u, 1e6],
+  [/^\s?(?:B|bn|млрд\.?)(?![\p{L}])/u, 1e9],
+];
+
+/** Parses "41 230", "1,234.56", "1 234,56", "1.234.567", "31.6k", "1,2 млн" into a number. */
 export function parseNumber(text: string): number | null {
-  const m = text.replace(/[\u00a0\u2009\u202f]/g, ' ').match(/-?\d[\d\s.,']*/);
+  const clean = text.replace(/[\u00a0\u2009\u202f]/g, ' ');
+  const m = clean.match(/-?\d[\d\s.,']*/);
   if (!m) return null;
+  const rest = clean.slice((m.index ?? 0) + m[0].trimEnd().length);
+  const scale = MAGNITUDE.find(([re]) => re.test(rest))?.[1] ?? 1;
   let s = m[0].trim().replace(/[\s']/g, '');
   const lastComma = s.lastIndexOf(',');
   const lastDot = s.lastIndexOf('.');
@@ -27,14 +37,15 @@ export function parseNumber(text: string): number | null {
     s = s.split(thou).join('').replace(dec, '.');
   } else if (lastComma >= 0) {
     const decimals = s.length - lastComma - 1;
-    s = decimals === 2 && s.indexOf(',') === lastComma ? s.replace(',', '.') : s.split(',').join('');
+    // A thousands separator is always followed by three digits: "4,5" and "1,25" are decimals, "1,234" is not.
+    s = decimals >= 1 && decimals <= 2 && s.indexOf(',') === lastComma ? s.replace(',', '.') : s.split(',').join('');
   } else if (lastDot >= 0) {
     const parts = s.split('.');
     if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) s = parts.join('');
   }
   s = s.replace(/[.,]$/, '');
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
+  const n = Number(s) * scale;
+  return Number.isFinite(n) ? Math.round(n * 1e6) / 1e6 : null;
 }
 
 export function detectCurrency(text: string): string | null {
