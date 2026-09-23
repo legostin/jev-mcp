@@ -592,10 +592,27 @@ export class Task extends Emitter<TaskEvents> {
     return out;
   }
 
-  private popupOptions(model: Model): ElementNode[] {
-    const popupIds = new Set(model.regions.filter((r) => r.kind === 'popup').map((r) => r.id));
-    return [...model.elements.values()].filter((e) => e.visible && e.interactive && popupIds.has(e.regionId)
+  /**
+   * Options of popups that belong to a field: popups near it (below or beside, as autocompletes render), or all
+   * popups when no field is given. Unrelated floating layers (ads, chat widgets) are ignored.
+   */
+  private popupOptions(model: Model, near?: ElementNode): ElementNode[] {
+    const popups = model.regions.filter((r) => r.kind === 'popup' || (r.kind === 'list' && r.parentId && model.regions.find((p) => p.id === r.parentId)?.kind === 'popup'));
+    const close = near ? popups.filter((r) => {
+      const f = near.rect;
+      const verticalGap = r.rect.y - (f.y + f.h);
+      const horizontalOverlap = Math.min(r.rect.x + r.rect.w, f.x + f.w) - Math.max(r.rect.x, f.x);
+      return verticalGap > -f.h - 20 && verticalGap < 420 && horizontalOverlap > -40;
+    }) : popups;
+    const ids = new Set(close.map((r) => r.id));
+    for (const r of model.regions) if (r.parentId && ids.has(r.parentId)) ids.add(r.id);
+    return [...model.elements.values()].filter((e) => e.visible && e.interactive && ids.has(e.regionId)
       && ['option', 'menuitem', 'link', 'button', 'clickable'].includes(e.kind));
+  }
+
+  private fieldOf(model: Model, key: string): ElementNode | undefined {
+    const ref = this.paramRefs[key];
+    return ref ? model.elements.get(ref) : undefined;
   }
 
   private async chooseSubintent(model: Model, a: AssessOutput): Promise<Subintent> {
@@ -607,6 +624,9 @@ export class Task extends Emitter<TaskEvents> {
     const blocking = model.regions.filter((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking);
     for (const r of blocking) {
       const kind = a.overlays[r.id]?.kind ?? 'other';
+      if (kind === 'captcha') {
+        return { type: 'blocker', kind: 'captcha', summary: 'The site shows a CAPTCHA / bot check. Solve it in the browser (or ask the user to), then answer "continue".' };
+      }
       return { type: 'dismiss_overlay', region: r.id, overlayKind: kind };
     }
     // Non-blocking cookie notices are dismissed once, proactively (they tend to cover results and buttons).
@@ -617,7 +637,8 @@ export class Task extends Emitter<TaskEvents> {
       }
     }
     // Suggestions right after typing a param.
-    if (this.lastTypedKey && this.lastSub?.type === 'fill_param' && this.status[this.lastTypedKey] !== 'skipped' && this.popupOptions(model).length) {
+    if (this.lastTypedKey && this.lastSub?.type === 'fill_param' && this.status[this.lastTypedKey] !== 'skipped'
+      && this.popupOptions(model, this.fieldOf(model, this.lastTypedKey)).length) {
       return { type: 'pick_suggestion', key: this.lastTypedKey };
     }
     // An open calendar with a pending date param.
@@ -709,7 +730,11 @@ export class Task extends Emitter<TaskEvents> {
   private async execute(sub: Subintent, model: Model, a: AssessOutput): Promise<Outcome> {
     switch (sub.type) {
       case 'blocker': {
-        const ans = await this.escalate('blocker', sub.summary, { answer_with: ['continue', 'hint', 'abort'] });
+        const headless = this.deps.port.interactive?.() === false;
+        const summary = headless
+          ? `${sub.summary} This tab runs in a headless browser nobody can see: restart the task with driver "extension" (your Chrome) or set driver.chromium.headless=false, or abort.`
+          : sub.summary;
+        const ans = await this.escalate('blocker', summary, { answer_with: ['continue', 'hint', 'abort'], context: { headless } });
         return { outcome: 'retry', note: `blocker (${sub.kind}): ${ans.type}` };
       }
       case 'dismiss_overlay': return this.dismissOverlay(sub, model);
@@ -846,7 +871,7 @@ export class Task extends Emitter<TaskEvents> {
     const typedOk = p.secret || fieldHoldsValue(field, p) || !!field?.value;
     this.settleGrounding(typedOk);
     const note = `typed ${p.secret ? '[secret]' : `"${value}"`} into ${el.ref} "${el.name}" for ${k}`;
-    if (this.popupOptions(after).length) {
+    if (this.popupOptions(after, field).length) {
       const picked = await this.pickSuggestion(k, after);
       return { outcome: picked.outcome, note: `${note}; ${picked.note}`, action: { type: 'type', ref: el.ref, param: k, then: picked.action } };
     }
@@ -857,7 +882,7 @@ export class Task extends Emitter<TaskEvents> {
   }
 
   private async pickSuggestion(k: string, model: Model): Promise<Outcome> {
-    const options = this.popupOptions(model);
+    const options = this.popupOptions(model, this.fieldOf(model, k));
     if (!options.length) { this.status[k] = 'done'; return { outcome: 'ok', note: `no suggestions for ${k}` }; }
     const refs = options.slice(0, 60).map((e) => e.ref);
     const res = await runQuestions(this.qctx(), buildSuggestionPick(model, refs, this.params, k, this.budget()));
@@ -883,7 +908,7 @@ export class Task extends Emitter<TaskEvents> {
     await this.click(el);
     await this.settle();
     const after = await this.observe(false);
-    const stillOpen = this.popupOptions(after).some((o) => o.ref === ref);
+    const stillOpen = this.popupOptions(after, this.fieldOf(after, k)).some((o) => o.ref === ref);
     this.deps.trace.labelCall(res.callId, !stillOpen, 'suggestion click');
     this.status[k] = stillOpen ? 'typed' : 'done';
     this.lastTypedKey = null;

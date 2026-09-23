@@ -17,6 +17,7 @@ export const PAGE_KINDS = {
 export type PageKind = keyof typeof PAGE_KINDS;
 
 export const OVERLAY_KINDS = {
+  captcha: 'A CAPTCHA or bot check: pick images, "I am not a robot", puzzles or audio tests.',
   cookie_consent: 'A cookie, tracking or privacy consent notice.',
   promo: 'A promotion, newsletter, discount or subscription offer.',
   region_picker: 'A choice of region, city, language or currency.',

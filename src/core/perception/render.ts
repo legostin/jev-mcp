@@ -199,9 +199,14 @@ export function elementLines(model: PageModel, refs: string[], opts: { region?: 
 
 export function regionLines(model: PageModel, ids?: string[]): Record<string, string> {
   const out: Record<string, string> = {};
+  const subtree = (id: string): string[] => {
+    const own = model.regions.find((x) => x.id === id)?.refs ?? [];
+    return [...own, ...model.regions.filter((x) => x.parentId === id).flatMap((x) => subtree(x.id))];
+  };
   for (const r of model.regions) {
     if (r.id === 'r0' || (ids && !ids.includes(r.id))) continue;
-    const els = r.refs.map((x) => model.elements.get(x)!).filter((e) => e && e.visible);
+    // Summaries include nested regions: a modal overlay usually wraps a dialog that holds the content.
+    const els = subtree(r.id).map((x) => model.elements.get(x)!).filter((e) => e && e.visible);
     const sample = els.filter((e) => e.interactive).slice(0, 5).map((e) => `${e.kind} ${q(e.name || e.value || '', 24)}`);
     const texts = els.filter((e) => !e.interactive).slice(0, 2).map((e) => q(e.name, 40));
     out[r.id] = `${r.kind}${r.label ? ` ${q(r.label, 50)}` : ''}${r.blocking ? ' [BLOCKING]' : ''}${r.items ? ` ${r.items.length} items` : ''}`
