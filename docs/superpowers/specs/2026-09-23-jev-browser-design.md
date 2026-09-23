@@ -124,8 +124,8 @@ Skill рекомендует основному агенту писать `goal`
 
 ### Стек и структура
 
-Монорепо на npm workspaces, TypeScript, Node ≥ 22 (установлен v24.13). Пакеты: `packages/core`,
-`packages/daemon`, `packages/mcp`, `packages/cli`, `packages/extension`, `packages/ui`.
+Один npm-пакет, TypeScript (запуск через нативный type stripping Node ≥ 22.18, установлен v24.13).
+Компоненты разнесены по папкам: `src/core/*`, `src/daemon`, `src/mcp`, `src/cli`, `extension/`, `ui/`.
 Плюс `fixtures/sites/` (тестовые сайты), `evals/` (размеченные снимки и прогонщик),
 `skills/jev-browser/SKILL.md` (skill для основного агента).
 
