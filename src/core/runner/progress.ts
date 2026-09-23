@@ -24,6 +24,15 @@ export function normalizeText(s: string): string {
   return s.toLowerCase().replace(/ё/g, 'е').replace(/[\s\u00a0]+/g, ' ').trim();
 }
 
+/** Is this control's label the value itself? Ignores dropdown arrows and trailing counts ("Toyota (1 234)", "Toyota 1234"). */
+export function isValueLabel(name: string, want: string): boolean {
+  const n = normalizeText(name).replace(/[\s▾▼⌄›»✓✔]+$/u, '');
+  if (!n || !want) return false;
+  if (n === want) return true;
+  const m = n.match(/^(.*?\S)\s*(?:\(\s*\d[\d\s.,]*\)|\s\d[\d\s.,]*)$/u);
+  return !!m && m[1] === want;
+}
+
 /** Code-side check: does a field already hold the param's value? */
 export function fieldHoldsValue(el: ElementNode | undefined, p: ParamSpec): boolean {
   if (!el || p.secret) return false;

@@ -24,7 +24,7 @@ import { inRange } from '../extract/dates.ts';
 import { deterministicRisk, domainAllowed } from '../safety/rules.ts';
 import { maskSecrets, secretValues } from '../safety/secrets.ts';
 import { thresholdsFor, hostOf } from './thresholds.ts';
-import { dateRange, fieldHoldsValue, normalizeText, paramKind, requiredEmptyFields } from './progress.ts';
+import { dateRange, fieldHoldsValue, isValueLabel, normalizeText, paramKind, requiredEmptyFields } from './progress.ts';
 import { Emitter } from '../util/events.ts';
 import { newId } from '../util/ids.ts';
 import { logger } from '../util/log.ts';
@@ -994,7 +994,8 @@ export class Task extends Emitter<TaskEvents> {
       this.settleGrounding(true);
       return { outcome: 'ok', note: `selected ${k} in ${el.ref} "${el.name}"`, action: { type: 'select', ref: el.ref } };
     }
-    if (el.kind === 'clickable' || el.kind === 'button') return this.pickFromDropdown(sub, el, before, trial);
+    // Anything clickable is either the value itself (a chip, option, filter link) or the trigger of a list of values.
+    if (['clickable', 'button', 'option', 'menuitem', 'radio', 'checkbox', 'link', 'tab'].includes(el.kind)) return this.pickFromDropdown(sub, el, before, trial);
     if (fieldHoldsValue(el, p)) {
       this.status[k] = 'done';
       return { outcome: 'ok', note: `${k} already filled in ${el.ref}` };
@@ -1026,8 +1027,7 @@ export class Task extends Emitter<TaskEvents> {
     const k = sub.key;
     const p = this.params[k];
     const want = normalizeText(String(p.value));
-    const label = normalizeText(trigger.name);
-    if (label === want) {
+    if (isValueLabel(trigger.name, want) || isValueLabel(trigger.text ?? '', want)) {
       // A quick-select button that IS the value ("Павлодар", "Toyota"): press it unless it is already on.
       if (!trigger.states.selected && !trigger.states.checked) {
         await this.click(trigger);
@@ -1039,7 +1039,8 @@ export class Task extends Emitter<TaskEvents> {
       this.settleGrounding(true);
       return { outcome: 'ok', note: `pressed ${trigger.ref} "${trigger.name}" for ${k}`, action: { type: 'click', ref: trigger.ref, param: k } };
     }
-    if (normalizeText(trigger.text ?? trigger.name).includes(want)) {
+    // A dropdown trigger that already shows the value ("Караганда ▾" instead of "Где искать ▾").
+    if ((trigger.kind === 'button' || trigger.kind === 'clickable') && normalizeText(trigger.text ?? trigger.name).includes(want)) {
       this.status[k] = 'done';
       return { outcome: 'ok', note: `${k} already set in ${trigger.ref} "${trigger.name}"` };
     }

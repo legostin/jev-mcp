@@ -41,7 +41,9 @@ export function paramIntent(key: string, p: ParamSpec): Intent {
   if (p.secret) return { target: `the input field for the ${about}`, action: 'type', kinds: ['textbox', 'combobox'], trial: false };
   return {
     target: `the control that sets the ${about} to "${valueText(p.value)}": an option or button showing this value, or the field where it is typed or chosen`,
-    kinds: ['textbox', 'combobox', 'select', 'clickable', 'button'], trial: true,
+    fallback: `the input field, dropdown or selector where the ${about} is typed or chosen`,
+    // Values come as chips, options, menu items, radios, checkboxes or filter links as often as fields.
+    kinds: ['textbox', 'combobox', 'select', 'clickable', 'button', 'option', 'menuitem', 'radio', 'checkbox', 'link', 'tab'], trial: true,
   };
 }
 

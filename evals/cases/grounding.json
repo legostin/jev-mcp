@@ -1,56 +1,501 @@
 {
-  "setups": {
-    "flights": { "fixture": "flights.html", "wait": 500, "steps": [{ "click": "Принять все" }] },
-    "flights_consent": { "fixture": "flights.html", "wait": 500, "steps": [] },
-    "results": { "fixture": "results.html?from=ALA&to=AYT&date=2026-10-14", "wait": 400, "steps": [] },
-    "login": { "fixture": "login.html", "steps": [] },
-    "labels": { "fixture": "labels.html", "steps": [] },
-    "checkout": { "fixture": "checkout.html?price=41230", "steps": [] },
-    "modal": { "fixture": "modal.html", "steps": [] },
-    "shadow": { "fixture": "shadow.html", "steps": [] },
-    "iframe": { "fixture": "iframe-outer.html", "wait": 800, "steps": [] }
+ "setups": {
+  "flights": {
+   "fixture": "flights.html",
+   "wait": 500,
+   "steps": [
+    {
+     "click": "Принять все"
+    }
+   ]
   },
-  "cases": [
-    { "setup": "flights", "target": "the input field for the departure city", "kinds": ["textbox", "combobox"], "expect": "Откуда" },
-    { "setup": "flights", "target": "the input field for the destination city", "kinds": ["textbox", "combobox"], "expect": "Куда" },
-    { "setup": "flights", "target": "the control that opens the departure date picker", "expect": "Когда Дата" },
-    { "setup": "flights", "target": "the control for the return date", "expect": "Обратно Без обратного" },
-    { "setup": "flights", "target": "the passengers and cabin class selector", "expect": "Пассажиры 1 пассажир, эконом" },
-    { "setup": "flights", "target": "the button that starts the flight search", "expect": "Найти билеты" },
-    { "setup": "flights", "target": "the button that swaps departure and destination", "expect": "Поменять местами" },
-    { "setup": "flights", "target": "the city field of the newsletter subscription form", "kinds": ["textbox", "combobox"], "expect": "Город" },
-    { "setup": "flights", "target": "the email field for the newsletter", "kinds": ["textbox", "combobox"], "expect": "Email" },
-    { "setup": "flights", "target": "the button that subscribes to the newsletter", "expect": "Подписаться" },
-    { "setup": "flights", "target": "the link to sign in to the account", "expect": "Войти" },
-    { "setup": "flights", "target": "the link to the hotels section", "expect": "Отели" },
-    { "setup": "flights_consent", "target": "the button that accepts all cookies", "expect": "Принять все" },
-    { "setup": "flights_consent", "target": "the button that opens cookie settings", "expect": "Настроить" },
-    { "setup": "results", "target": "the tab that sorts results by lowest price", "expect": "Самый дешёвый" },
-    { "setup": "results", "target": "the tab that sorts results by shortest travel time", "expect": "Самый быстрый" },
-    { "setup": "results", "target": "the button that loads more results", "expect": "Показать ещё 10 билетов" },
-    { "setup": "results", "target": "the filter for direct flights without stops", "expect": "Без пересадок" },
-    { "setup": "results", "target": "the airline filter for Pegasus", "expect": "Pegasus" },
-    { "setup": "results", "target": "the link back to the home page", "expect": "✈ Avia Fixture" },
-    { "setup": "login", "target": "the email input", "kinds": ["textbox", "combobox"], "expect": "Email address" },
-    { "setup": "login", "target": "the password input", "kinds": ["textbox", "combobox"], "expect": "Password" },
-    { "setup": "login", "target": "the option to stay signed in", "expect": "Keep me signed in" },
-    { "setup": "login", "target": "the button that signs in", "expect": "Sign in" },
-    { "setup": "login", "target": "the link to recover a forgotten password", "expect": "Forgot password?" },
-    { "setup": "labels", "target": "the phone number input", "kinds": ["textbox", "combobox"], "expect": "Phone number" },
-    { "setup": "labels", "target": "the postal code input", "kinds": ["textbox", "combobox"], "expect": "Postal code" },
-    { "setup": "labels", "target": "the promo code input", "kinds": ["textbox", "combobox"], "expect": "Promo code" },
-    { "setup": "labels", "target": "the country selector", "expect": "Country" },
-    { "setup": "labels", "target": "the button that closes the dialog", "expect": "Close dialog" },
-    { "setup": "labels", "target": "the nickname input", "kinds": ["textbox", "combobox"], "expect": "Nickname" },
-    { "setup": "checkout", "target": "the card number input", "kinds": ["textbox", "combobox"], "expect": "Номер карты" },
-    { "setup": "checkout", "target": "the button that pays for the order", "expect": "Оплатить 41 230 ₸" },
-    { "setup": "checkout", "target": "the first name input", "kinds": ["textbox", "combobox"], "expect": "Имя латиницей" },
-    { "setup": "modal", "target": "the button that closes the discount popup", "expect": "Close" },
-    { "setup": "modal", "target": "the button that starts shopping", "expect": "Shop now" },
-    { "setup": "shadow", "target": "the work email input", "kinds": ["textbox", "combobox"], "expect": "Work email" },
-    { "setup": "iframe", "target": "the cardholder name input", "kinds": ["textbox", "combobox"], "expect": "Cardholder name" },
-    { "setup": "flights", "target": "the input for a promo code", "kinds": ["textbox", "combobox"], "expect": null },
-    { "setup": "login", "target": "the phone number input", "kinds": ["textbox", "combobox"], "expect": null },
-    { "setup": "results", "target": "the button that books a hotel", "expect": null }
-  ]
+  "flights_consent": {
+   "fixture": "flights.html",
+   "wait": 500,
+   "steps": []
+  },
+  "results": {
+   "fixture": "results.html?from=ALA&to=AYT&date=2026-10-14",
+   "wait": 400,
+   "steps": []
+  },
+  "login": {
+   "fixture": "login.html",
+   "steps": []
+  },
+  "labels": {
+   "fixture": "labels.html",
+   "steps": []
+  },
+  "checkout": {
+   "fixture": "checkout.html?price=41230",
+   "steps": []
+  },
+  "modal": {
+   "fixture": "modal.html",
+   "steps": []
+  },
+  "shadow": {
+   "fixture": "shadow.html",
+   "steps": []
+  },
+  "iframe": {
+   "fixture": "iframe-outer.html",
+   "wait": 800,
+   "steps": []
+  },
+  "filters": {
+   "fixture": "filters.html",
+   "steps": []
+  },
+  "filters_brand": {
+   "fixture": "filters.html",
+   "steps": [
+    {
+     "click": "Toyota"
+    }
+   ]
+  },
+  "filters_popup": {
+   "fixture": "filters.html",
+   "steps": [
+    {
+     "click": "Где искать"
+    }
+   ]
+  }
+ },
+ "cases": [
+  {
+   "setup": "flights",
+   "target": "the input field for the departure city",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Откуда"
+  },
+  {
+   "setup": "flights",
+   "target": "the input field for the destination city",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Куда"
+  },
+  {
+   "setup": "flights",
+   "target": "the control that opens the departure date picker",
+   "expect": "Когда Дата"
+  },
+  {
+   "setup": "flights",
+   "target": "the control for the return date",
+   "expect": "Обратно Без обратного"
+  },
+  {
+   "setup": "flights",
+   "target": "the passengers and cabin class selector",
+   "expect": "Пассажиры 1 пассажир, эконом"
+  },
+  {
+   "setup": "flights",
+   "target": "the button that starts the flight search",
+   "expect": "Найти билеты"
+  },
+  {
+   "setup": "flights",
+   "target": "the button that swaps departure and destination",
+   "expect": "Поменять местами"
+  },
+  {
+   "setup": "flights",
+   "target": "the city field of the newsletter subscription form",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Город"
+  },
+  {
+   "setup": "flights",
+   "target": "the email field for the newsletter",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Email"
+  },
+  {
+   "setup": "flights",
+   "target": "the button that subscribes to the newsletter",
+   "expect": "Подписаться"
+  },
+  {
+   "setup": "flights",
+   "target": "the link to sign in to the account",
+   "expect": "Войти"
+  },
+  {
+   "setup": "flights",
+   "target": "the link to the hotels section",
+   "expect": "Отели"
+  },
+  {
+   "setup": "flights_consent",
+   "target": "the button that accepts all cookies",
+   "expect": "Принять все"
+  },
+  {
+   "setup": "flights_consent",
+   "target": "the button that opens cookie settings",
+   "expect": "Настроить"
+  },
+  {
+   "setup": "results",
+   "target": "the tab that sorts results by lowest price",
+   "expect": "Самый дешёвый"
+  },
+  {
+   "setup": "results",
+   "target": "the tab that sorts results by shortest travel time",
+   "expect": "Самый быстрый"
+  },
+  {
+   "setup": "results",
+   "target": "the button that loads more results",
+   "expect": "Показать ещё 10 билетов"
+  },
+  {
+   "setup": "results",
+   "target": "the filter for direct flights without stops",
+   "expect": "Без пересадок"
+  },
+  {
+   "setup": "results",
+   "target": "the airline filter for Pegasus",
+   "expect": "Pegasus"
+  },
+  {
+   "setup": "results",
+   "target": "the link back to the home page",
+   "expect": "✈ Avia Fixture"
+  },
+  {
+   "setup": "login",
+   "target": "the email input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Email address"
+  },
+  {
+   "setup": "login",
+   "target": "the password input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Password"
+  },
+  {
+   "setup": "login",
+   "target": "the option to stay signed in",
+   "expect": "Keep me signed in"
+  },
+  {
+   "setup": "login",
+   "target": "the button that signs in",
+   "expect": "Sign in"
+  },
+  {
+   "setup": "login",
+   "target": "the link to recover a forgotten password",
+   "expect": "Forgot password?"
+  },
+  {
+   "setup": "labels",
+   "target": "the phone number input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Phone number"
+  },
+  {
+   "setup": "labels",
+   "target": "the postal code input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Postal code"
+  },
+  {
+   "setup": "labels",
+   "target": "the promo code input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Promo code"
+  },
+  {
+   "setup": "labels",
+   "target": "the country selector",
+   "expect": "Country"
+  },
+  {
+   "setup": "labels",
+   "target": "the button that closes the dialog",
+   "expect": "Close dialog"
+  },
+  {
+   "setup": "labels",
+   "target": "the nickname input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Nickname"
+  },
+  {
+   "setup": "checkout",
+   "target": "the card number input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Номер карты"
+  },
+  {
+   "setup": "checkout",
+   "target": "the button that pays for the order",
+   "expect": "Оплатить 41 230 ₸"
+  },
+  {
+   "setup": "checkout",
+   "target": "the first name input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Имя латиницей"
+  },
+  {
+   "setup": "modal",
+   "target": "the button that closes the discount popup",
+   "expect": "Close"
+  },
+  {
+   "setup": "modal",
+   "target": "the button that starts shopping",
+   "expect": "Shop now"
+  },
+  {
+   "setup": "shadow",
+   "target": "the work email input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Work email"
+  },
+  {
+   "setup": "iframe",
+   "target": "the cardholder name input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": "Cardholder name"
+  },
+  {
+   "setup": "flights",
+   "target": "the input for a promo code",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": null
+  },
+  {
+   "setup": "login",
+   "target": "the phone number input",
+   "kinds": [
+    "textbox",
+    "combobox"
+   ],
+   "expect": null
+  },
+  {
+   "setup": "results",
+   "target": "the button that books a hotel",
+   "expect": null
+  },
+  {
+   "setup": "filters",
+   "param": {
+    "key": "city",
+    "value": "Павлодар",
+    "about": "city where the car is sold"
+   },
+   "expect": "Павлодар"
+  },
+  {
+   "setup": "filters",
+   "param": {
+    "key": "city",
+    "value": "Караганда",
+    "about": "city where the car is sold"
+   },
+   "expect": [
+    "Где искать",
+    "ещё"
+   ]
+  },
+  {
+   "setup": "filters",
+   "param": {
+    "key": "brand",
+    "value": "Toyota",
+    "about": "car brand (make)"
+   },
+   "expect": "Toyota"
+  },
+  {
+   "setup": "filters",
+   "param": {
+    "key": "brand",
+    "value": "Lexus",
+    "about": "car brand (make)"
+   },
+   "expect": [
+    "Марка",
+    "ещё"
+   ]
+  },
+  {
+   "setup": "filters_brand",
+   "param": {
+    "key": "model",
+    "value": "Camry",
+    "about": "car model"
+   },
+   "expect": "Camry"
+  },
+  {
+   "setup": "filters_brand",
+   "param": {
+    "key": "model",
+    "value": "Highlander",
+    "about": "car model"
+   },
+   "expect": [
+    "Модель",
+    "ещё"
+   ]
+  },
+  {
+   "setup": "filters",
+   "param": {
+    "key": "price_from",
+    "value": "1000000",
+    "about": "minimum price"
+   },
+   "expect": "Цена"
+  },
+  {
+   "setup": "filters",
+   "param": {
+    "key": "price_to",
+    "value": "3000000",
+    "about": "maximum price"
+   },
+   "expect": "до"
+  },
+  {
+   "setup": "filters",
+   "param": {
+    "key": "model",
+    "value": "Camry",
+    "about": "car model"
+   },
+   "expect": null
+  },
+  {
+   "setup": "filters_popup",
+   "param": {
+    "key": "city",
+    "value": "Караганда",
+    "about": "city where the car is sold"
+   },
+   "expect": "Караганда"
+  },
+  {
+   "setup": "flights",
+   "param": {
+    "key": "from",
+    "value": "Алматы",
+    "about": "departure city"
+   },
+   "expect": "Откуда"
+  },
+  {
+   "setup": "flights",
+   "param": {
+    "key": "to",
+    "value": "Анталия",
+    "about": "destination city"
+   },
+   "expect": "Куда"
+  },
+  {
+   "setup": "login",
+   "param": {
+    "key": "email",
+    "value": "ann@example.com",
+    "about": "account email"
+   },
+   "expect": "Email address"
+  },
+  {
+   "setup": "login",
+   "param": {
+    "key": "remember",
+    "value": true,
+    "about": "stay signed in"
+   },
+   "expect": "Keep me signed in"
+  },
+  {
+   "setup": "labels",
+   "param": {
+    "key": "phone",
+    "value": "+7 701 000 00 00",
+    "about": "phone number"
+   },
+   "expect": "Phone number"
+  },
+  {
+   "setup": "labels",
+   "param": {
+    "key": "country",
+    "value": "Kazakhstan",
+    "about": "country"
+   },
+   "expect": "Country"
+  },
+  {
+   "setup": "checkout",
+   "param": {
+    "key": "first",
+    "value": "ANNA",
+    "about": "first name (latin letters)"
+   },
+   "expect": "Имя латиницей"
+  }
+ ]
 }

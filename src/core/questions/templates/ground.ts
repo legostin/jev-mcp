@@ -23,6 +23,11 @@ export interface Intent {
   trial?: boolean;
   /** Signatures of elements already tried and rolled back for this step. */
   exclude?: string[];
+  /**
+   * Asked in the same call: used when `target` is not on the page. For params, `target` is "the control that sets X
+   * to V" (a button showing V is best) and `fallback` is the field where X is chosen (V is not shown as a button).
+   */
+  fallback?: string;
 }
 
 export interface GroundCandidate { ref: string; p: number; desc: string }
@@ -85,18 +90,23 @@ export function candidateElements(model: PageModel, intent: Intent): ElementNode
 
 function intentState(intent: Intent): Record<string, Json> {
   const s: Record<string, Json> = { target: intent.target };
+  if (intent.fallback) s.fallback = intent.fallback;
   if (intent.action) s.action = intent.action;
   return s;
 }
 
-function elementQuestions(refs: string[]): Record<string, Question> {
+function elementQuestions(refs: string[], fallback: boolean): Record<string, Question> {
   const criteria: Record<string, Json | null> = {};
   for (const r of refs) criteria[r] = null;
-  criteria.none = 'No element in `page.elements` is `intent.target`.';
-  return {
-    pick: { type: 'choice', instructions: 'Which element in `page.elements` is `intent.target`?', criteria },
+  const qs: Record<string, Question> = {
+    pick: { type: 'choice', instructions: 'Which element in `page.elements` is `intent.target`?', criteria: { ...criteria, none: 'No element in `page.elements` is `intent.target`.' } },
     exists: { type: 'noul', instructions: 'Is `intent.target` one of the elements listed in `page.elements`?' },
   };
+  if (fallback) {
+    qs.fallback = { type: 'choice', instructions: 'Which element in `page.elements` is `intent.fallback`?', criteria: { ...criteria, none: 'No element in `page.elements` is `intent.fallback`.' } };
+    qs.fallback_exists = { type: 'noul', instructions: 'Is `intent.fallback` one of the elements listed in `page.elements`?' };
+  }
+  return qs;
 }
 
 /**
@@ -111,7 +121,7 @@ export async function groundByIntent(
   let cost = 0;
   const all = candidateElements(model, intent);
   const empty: GroundResult = { ref: null, confidence: 1, exists: 0, candidates: [], ranked: [], stage: 'none', decision: 'none', callIds, costUsd: 0 };
-  const ctxParts = { goal: gctx.goal, step: gctx.step, params: gctx.params, hints: gctx.hints, intent: intentState(intent) };
+  let ctxParts = { goal: gctx.goal, step: gctx.step, params: gctx.params, hints: gctx.hints, intent: intentState(intent) };
   if (!all.length) return empty;
   const q = tokens(`${intent.target} ${gctx.goal ?? ''}`);
   const scored = all
@@ -136,7 +146,7 @@ export async function groundByIntent(
     const state = buildState({ ...ctxParts, page: { url: model.url, title: model.title, regions: regionsDesc } }, gctx.budgetTokens);
     const res = await runQuestions(ctx, {
       template: 'ground.region', state,
-      questions: { region: { type: 'choice', instructions: 'Which region in `page.regions` contains `intent.target`?', criteria } },
+      questions: { region: { type: 'choice', instructions: intent.fallback ? 'Which region in `page.regions` contains `intent.target` or `intent.fallback`?' : 'Which region in `page.regions` contains `intent.target`?', criteria } },
     });
     callIds.push(res.callId); cost += res.costUsd;
     const regionAns = choiceOf(res.answers, 'region');
@@ -159,10 +169,20 @@ export async function groundByIntent(
   const state = buildState({ ...ctxParts, page: { url: model.url, title: model.title, elements } }, gctx.budgetTokens);
   // The state builder may have trimmed elements to fit the budget; only ask about what JEV can see.
   const visibleRefs = Object.keys(((state as Record<string, Json>).page as Record<string, Json>).elements as Record<string, string>);
-  const res = await runQuestions(ctx, { template: 'ground.element', state, questions: elementQuestions(visibleRefs.length >= 1 ? visibleRefs : refs) });
+  const res = await runQuestions(ctx, { template: 'ground.element', state, questions: elementQuestions(visibleRefs.length >= 1 ? visibleRefs : refs, !!intent.fallback) });
   callIds.push(res.callId); cost += res.costUsd;
-  const pick = choiceOf(res.answers, 'pick');
-  const exists = noulOf(res.answers, 'exists');
+  let pick = choiceOf(res.answers, 'pick');
+  let exists = noulOf(res.answers, 'exists');
+  if (intent.fallback && (pick.choice === 'none' || gateNoul(exists, th.ground.noul) === 'no')) {
+    const fb = choiceOf(res.answers, 'fallback');
+    if (fb.choice !== 'none') {
+      // The main target is not on the page (no button shows the value): go for the field where it is chosen.
+      intent = { ...intent, target: intent.fallback, fallback: undefined };
+      ctxParts = { ...ctxParts, intent: intentState(intent) };
+      pick = fb;
+      exists = noulOf(res.answers, 'fallback_exists');
+    }
+  }
   const candidates = topCandidates(pick, 5, ['none']).map((c) => ({ ref: c.key, p: c.p, desc: elements[c.key] ?? '' }));
   const base = { confidence: pick.confidence, exists, candidates, ranked: candidates, stage, callIds, costUsd: cost };
   const trial = !!intent.trial && th.trial.enabled;
