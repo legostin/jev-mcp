@@ -137,6 +137,8 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(result.status).toBe('done');
     expect(result.result.selected.price.amount).toBe(650000);
     expect(result.result.selected.title).toMatch(/Toyota Camry/);
+    // Accessories listed with the cars (and cheaper) are left out.
+    expect(result.result.items_count).toBe(20);
     expect(questions).toHaveLength(0);
   }, 300_000);
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseMoney, parseNumber, parseDuration, parseDateTime, parseTime, numericValue, absUrl } from '../../src/core/extract/parse.ts';
+import { applySelect } from '../../src/core/extract/extract.ts';
 
 describe('value parsers', () => {
   it.each([
@@ -37,5 +38,15 @@ describe('value parsers', () => {
     expect(numericValue('06:40')).toBe(400);
     expect(numericValue('abc')).toBeNull();
     expect(absUrl('/x?a=1', 'http://h/p')).toBe('http://h/x?a=1');
+  });
+});
+
+describe('select rules', () => {
+  it('skip items that do not match the goal', () => {
+    const items = [{ price: { amount: 9000 } }, { price: { amount: 650000 } }, { price: { amount: 700000 } }];
+    expect(applySelect(items, 'min(price)')).toBe(0);
+    expect(applySelect(items, 'min(price)', [false, true, true])).toBe(1);
+    expect(applySelect(items, 'first', [false, true, true])).toBe(1);
+    expect(applySelect(items, 'min(price)', [false, false, false])).toBeUndefined();
   });
 });

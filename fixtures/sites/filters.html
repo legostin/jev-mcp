@@ -169,6 +169,14 @@ function listings() {
   });
   // The known cheapest listing sits in the middle of the default (date) ordering.
   items[7].price = 650000; items[7].year = 1998;
+  // Marketplaces list parts and accessories next to cars; sorted by price they come first.
+  const b = state.brand || 'Toyota';
+  const m = state.model || 'Camry';
+  items.push(
+    { id: 900001, title: `Коврики в салон ${b} ${m}`, year: 2020, price: 9000, city: items[0].city, order: 20 },
+    { id: 900002, title: `Чехлы на сиденья ${b} ${m}`, year: 2021, price: 15000, city: items[1].city, order: 21 },
+    { id: 900003, title: `Фара передняя ${b} ${m}`, year: 2019, price: 42000, city: items[2].city, order: 22 },
+  );
   return items;
 }
 

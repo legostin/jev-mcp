@@ -160,7 +160,7 @@ export class Task extends Emitter<TaskEvents> {
   private dirty = false;
   private sortTried = false;
   private sortedBy: string | null = null;
-  private collected = new Map<string, { item: Record<string, unknown>; snippets: string[]; url: string }>();
+  private collected = new Map<string, { item: Record<string, unknown>; snippets: string[]; url: string; relevant: boolean }>();
   /** Per step: elements tried and rolled back (by signature), so the next grounding skips them. */
   private rejected = new Map<string, { sig: string; desc: string }[]>();
   /** Set when a step ended in a rollback: the retry is progress, not a loop. */
@@ -1468,11 +1468,13 @@ export class Task extends Emitter<TaskEvents> {
     out.items.forEach((item, i) => {
       const key = String(item.url ?? '') || JSON.stringify(item);
       const snippets = out.itemRefs[i].map((r) => model.elements.get(r)).filter(Boolean).map((e) => e!.text || e!.name).filter(Boolean).slice(0, 8);
-      if (!this.collected.has(key)) this.collected.set(key, { item, snippets, url: model.url });
+      if (!this.collected.has(key)) this.collected.set(key, { item, snippets, url: model.url, relevant: out.relevant[i] !== false });
     });
     const maxItems = this.spec.policy.max_items ?? 200;
     const sorted = !!spec.select && this.sortedBy === spec.select;
-    const needsAll = !spec.select || spec.select === 'all' || (/^(min|max)\(/.test(spec.select) && !sorted);
+    const anyRelevant = [...this.collected.values()].some((c) => c.relevant);
+    // A sorted page answers min/max only if it holds a matching item (price-sorted pages often start with accessories).
+    const needsAll = !spec.select || spec.select === 'all' || (/^(min|max)\(/.test(spec.select) && (!sorted || !anyRelevant));
     const grew = this.collected.size > this.extractPrev;
     this.extractPrev = this.collected.size;
     if (needsAll && this.collected.size < maxItems && grew && this.loadMoreCount < 30) {
@@ -1484,15 +1486,22 @@ export class Task extends Emitter<TaskEvents> {
         return { outcome: 'ok', note: `read ${this.collected.size} results; loading more via ${g.ref} "${g.name}"`, action: { type: 'click', ref: g.ref, purpose: 'load_more' } };
       }
     }
-    const all = [...this.collected.values()];
+    const collected = [...this.collected.values()];
+    // Items that clearly do not match the goal (accessories, parts) are left out, unless nothing matched at all.
+    const all = collected.some((c) => c.relevant) ? collected.filter((c) => c.relevant) : collected;
+    const excluded = collected.length - all.length;
     const items = all.map((c) => c.item);
     const idx = applySelect(items, spec.select);
     const chosen = idx !== undefined ? all[idx] : undefined;
     this.finish('done', {
       result: { selected: chosen?.item, items_count: items.length },
       items,
-      evidence: { url: chosen?.url ?? model.url, refs: idx !== undefined && out.itemRefs[idx] && chosen?.url === model.url ? out.itemRefs[idx] : [], snippets: chosen?.snippets ?? [] },
-      warnings: [...out.warnings, ...(sorted ? [`Results were sorted on the site (${spec.select}); the answer comes from the first page.`] : [])],
+      evidence: { url: chosen?.url ?? model.url, refs: chosen && out.items.includes(chosen.item) ? out.itemRefs[out.items.indexOf(chosen.item)] : [], snippets: chosen?.snippets ?? [] },
+      warnings: [
+        ...out.warnings,
+        ...(sorted ? [`Results were sorted on the site (${spec.select}); the answer comes from the first page${this.loadMoreCount ? 's' : ''} read.`] : []),
+        ...(excluded ? [`${excluded} item(s) did not match the goal (accessories, parts or other products) and were left out.`] : []),
+      ],
     });
     return { outcome: 'finished', note: `extracted ${items.length} results${chosen ? '; selected one' : ''}${sorted ? ' (site-sorted)' : ''}` };
   }

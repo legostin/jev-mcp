@@ -16,6 +16,8 @@ export interface ExtractOutput {
   itemRefs: string[][];
   selected?: Record<string, unknown>;
   selectedIndex?: number;
+  /** Per item: is it what the goal asks for (not an accessory, a part or another product)? */
+  relevant: boolean[];
   mapping: Record<string, string | null>;
   mappingConfidence: Record<string, number>;
   evidence: { refs: string[]; snippets: string[] };
@@ -50,7 +52,10 @@ function leavesOf(model: PageModel, refs: string[], itemIdx: number): Leaf[] {
   return out;
 }
 
-/** Picks the list region of results: the only list, or the one JEV rates as results for the goal. */
+/**
+ * Picks the list region of results: the only list, or the one JEV rates as the page's main results list. Whether
+ * the items match the goal is judged per item later (a price-sorted list often starts with accessories).
+ */
 async function pickList(ctx: QuestionContext, model: PageModel, goal: string, budget: number, callIds: string[], cost: { v: number }): Promise<Region | null> {
   const lists = model.regions.filter((r) => r.kind === 'list' && (r.items?.length ?? 0) >= 2);
   if (!lists.length) return null;
@@ -61,11 +66,16 @@ async function pickList(ctx: QuestionContext, model: PageModel, goal: string, bu
     regions[r.id] = `${r.items!.length} items; first item: ${sample.join(' | ')}`;
   }
   const questions: Record<string, Question> = {};
-  for (const r of lists) questions[`is_results_${r.id}`] = { type: 'noul', instructions: `Is \`lists.${r.id}\` a list of results for \`goal\`?` };
+  for (const r of lists) {
+    questions[`is_results_${r.id}`] = {
+      type: 'noul',
+      instructions: `Is \`lists.${r.id}\` the main list of results on this page (search results, listings or products), rather than ads, suggestions, filters or navigation?`,
+    };
+  }
   const res = await runQuestions(ctx, { template: 'extract.is_item', state: buildState({ goal, extra: { lists: regions as unknown as Json } }, budget), questions });
   callIds.push(res.callId); cost.v += res.costUsd;
   let best: Region | null = null;
-  let bestP = 0.5;
+  let bestP = 0.3;
   for (const r of lists) {
     const p = noulOf(res.answers, `is_results_${r.id}`);
     if (p > bestP) { best = r; bestP = p; }
@@ -73,20 +83,47 @@ async function pickList(ctx: QuestionContext, model: PageModel, goal: string, bu
   return best;
 }
 
-export function applySelect(items: Record<string, unknown>[], select: string | undefined): number | undefined {
+/** Index of the selected item; items judged irrelevant to the goal are skipped. */
+export function applySelect(items: Record<string, unknown>[], select: string | undefined, relevant?: boolean[]): number | undefined {
   if (!items.length) return undefined;
   if (!select || select === 'all') return undefined;
-  if (select === 'first') return 0;
+  const ok = (i: number) => !relevant || relevant[i] !== false;
+  if (select === 'first') { const i = items.findIndex((_, j) => ok(j)); return i >= 0 ? i : undefined; }
   const m = select.match(/^(min|max)\((\w+)\)$/);
   if (!m) return undefined;
   let bestIdx: number | undefined;
   let bestVal: number | null = null;
   items.forEach((it, i) => {
+    if (!ok(i)) return;
     const v = numericValue(it[m[2]]);
     if (v === null) return;
     if (bestVal === null || (m[1] === 'min' ? v < bestVal : v > bestVal)) { bestVal = v; bestIdx = i; }
   });
   return bestIdx;
+}
+
+/**
+ * One batched call: is each item what the goal asks for? Only clear "no" answers exclude an item, so a vague goal
+ * never empties the list; a price-sorted page of accessories does.
+ */
+async function judgeRelevance(
+  ctx: QuestionContext, items: Record<string, unknown>[], leaves: Leaf[][], goal: string, budget: number, th: Thresholds,
+  callIds: string[], cost: { v: number },
+): Promise<boolean[]> {
+  if (items.length < 1 || !goal) return [];
+  const n = Math.min(items.length, 60);
+  const desc: Record<string, string> = {};
+  const questions: Record<string, Question> = {};
+  for (let i = 0; i < n; i++) {
+    desc[`i${i}`] = leaves[i].map((l) => l.el.text || l.el.name).filter(Boolean).join(' | ').slice(0, 200);
+    questions[`r_${i}`] = {
+      type: 'noul',
+      instructions: `Is \`items.i${i}\` the kind of item \`goal\` is looking for, rather than an accessory, a spare part or a different product? Ignore which item is cheapest, best or first.`,
+    };
+  }
+  const res = await runQuestions(ctx, { template: 'extract.relevant', state: buildState({ goal, extra: { items: desc as unknown as Json } }, Math.max(budget, 8000)), questions });
+  callIds.push(res.callId); cost.v += res.costUsd;
+  return items.map((_, i) => i >= n || noulOf(res.answers, `r_${i}`) > th.extract.noul.actNo);
 }
 
 /**
@@ -178,7 +215,9 @@ export async function extractResults(
     }
     return row;
   });
-  const selectedIndex = applySelect(items, spec.select);
+  const relevant = await judgeRelevance(ctx, items, allLeaves, opts.goal, opts.budgetTokens, th, callIds, cost);
+  if (relevant.length && !relevant.some(Boolean)) warnings.push('No item on this page matches the goal (accessories, parts or other products only).');
+  const selectedIndex = applySelect(items, spec.select, relevant);
   const selRefs = selectedIndex !== undefined ? itemRefs[selectedIndex] : [];
   return {
     listRegionId: list.id,
@@ -186,6 +225,7 @@ export async function extractResults(
     itemRefs,
     selected: selectedIndex !== undefined ? items[selectedIndex] : undefined,
     selectedIndex,
+    relevant,
     mapping,
     mappingConfidence,
     evidence: {
