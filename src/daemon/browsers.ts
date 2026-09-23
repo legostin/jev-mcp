@@ -45,8 +45,12 @@ export class BrowserManager {
     this.getConfig = getConfig;
   }
 
-  setExtensionDriver(driver: BrowserDriver | null): void {
+  /** Whether an extension was ever paired: only then is it worth waiting for it after a start. */
+  private extensionPaired: () => boolean = () => false;
+
+  setExtensionDriver(driver: BrowserDriver | null, paired?: () => boolean): void {
     this.extensionDriver = driver;
+    if (paired) this.extensionPaired = paired;
     if (!driver) {
       for (const t of this.tabs.values()) if (t.driver === 'extension') { t.page = null; }
     }
@@ -76,8 +80,19 @@ export class BrowserManager {
     return this.chromiumStarting;
   }
 
+  private readonly startedAt = Date.now();
+
+  /** The extension reconnects a few seconds after the daemon starts; give it that time before falling back. */
+  private async waitForExtension(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (!this.extensionDriver?.connected && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
+    return !!this.extensionDriver?.connected;
+  }
+
   async driver(kind: DriverKind | 'auto' = this.getConfig().driver.default): Promise<BrowserDriver> {
     let d: BrowserDriver;
+    const justStarted = Date.now() - this.startedAt < 15_000;
+    if (!this.extensionDriver?.connected && (kind === 'extension' || (kind === 'auto' && justStarted && this.extensionPaired()))) await this.waitForExtension(5_000);
     if (kind === 'extension' || (kind === 'auto' && this.extensionConnected)) {
       if (this.extensionDriver?.connected) d = this.extensionDriver;
       else if (kind === 'extension') throw new RpcError(ERR.browser, 'The jev Chrome extension is not connected. Load it and pair it (jev pair), or use driver "chromium".');

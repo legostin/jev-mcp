@@ -115,6 +115,9 @@ export class ExtensionBridge {
     return { code, validMinutes: PAIRING_MINUTES };
   }
 
+  /** Has any extension ever been paired with this daemon? */
+  get everPaired(): boolean { return this.tokens().length > 0; }
+
   private tokens(): string[] {
     if (!existsSync(tokensFile())) return [];
     try { return JSON.parse(readFileSync(tokensFile(), 'utf8')); } catch { return []; }
