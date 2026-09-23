@@ -96,6 +96,14 @@ async function pickList(ctx: QuestionContext, model: PageModel, goal: string, bu
 }
 
 /** Index of the selected item; items judged irrelevant to the goal are skipped. */
+/** The page's main results list (one JEV call when there are several lists). */
+export async function findResultsList(ctx: QuestionContext, model: PageModel, goal: string, budgetTokens: number): Promise<{ list: Region | null; callIds: string[]; costUsd: number }> {
+  const callIds: string[] = [];
+  const cost = { v: 0 };
+  const list = await pickList(ctx, model, goal, budgetTokens, callIds, cost);
+  return { list, callIds, costUsd: cost.v };
+}
+
 export function applySelect(items: Record<string, unknown>[], select: string | undefined, relevant?: boolean[]): number | undefined {
   if (!items.length) return undefined;
   if (!select || select === 'all') return undefined;

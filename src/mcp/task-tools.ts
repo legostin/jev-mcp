@@ -50,12 +50,19 @@ export function formatQuestion(q: Escalation): string {
   return lines.join('\n');
 }
 
-export function formatResult(taskId: string, r: any): string {
+export function formatResult(taskId: string, r: any, itemsLimit = 60): string {
   const lines = [`Task ${taskId} finished: ${r.status}${r.error ? ` (${r.error})` : ''}`];
+  if (r.page) {
+    // The results handed over for the agent to read: JEV found and prepared them, the agent decides.
+    lines.push(`Results page: "${r.page.title}" ${r.page.url}${r.page.sorted_by ? ` (sorted on the site ${r.page.sorted_by})` : ''}`);
+    lines.push(`Read the list and pick the answer yourself (JEV did not choose; skip accessories, sponsored or unrelated items). ${r.page.items.length} items${r.page.more ? ', the list continues on the page' : ''}:`);
+    for (const it of r.page.items.slice(0, itemsLimit)) lines.push(`  ${it.i}. ${it.text}${it.url ? ` → ${it.url}` : ''}`);
+    if (r.page.overview) lines.push(r.page.overview);
+  }
   if (r.result?.selected) lines.push(`Selected: ${JSON.stringify(r.result.selected)}`);
-  if (r.result?.items_count !== undefined) lines.push(`Items: ${r.result.items_count} (full list: jev_result)`);
+  if (r.result?.items_count !== undefined && !r.page) lines.push(`Items: ${r.result.items_count} (full list: jev_result)`);
   if (r.result?.goal_reached) lines.push('Goal reached.');
-  if (r.evidence) lines.push(`Evidence: ${r.evidence.url}${r.evidence.snippets?.length ? ` — ${r.evidence.snippets.slice(0, 4).join(' | ')}` : ''}`);
+  if (r.evidence && !r.page) lines.push(`Evidence: ${r.evidence.url}${r.evidence.snippets?.length ? ` — ${r.evidence.snippets.slice(0, 4).join(' | ')}` : ''}`);
   if (r.warnings?.length) lines.push(`Warnings: ${r.warnings.join('; ')}`);
   if (r.stats) lines.push(`Stats: ${r.stats.steps} steps, ${r.stats.jev_calls} JEV calls, ${r.stats.escalations} questions, $${Number(r.stats.cost_usd).toFixed(4)}, ${r.stats.duration_s}s`);
   return lines.join('\n');
@@ -92,8 +99,10 @@ export function registerTaskTools(server: McpServer, deps: ToolDeps): void {
       'Hand a multi-step browser goal to JEV. It runs in the background: JEV dismisses popups, fills fields from your params',
       '(picking autocomplete suggestions and calendar dates), submits, reads results and verifies each step. It asks you only when',
       'unsure (see instructions for how questions arrive). Write goal/about/hints in English; give param values exactly as the site',
-      'needs them. With a result schema the task extracts structured items and applies select (min(field)/max(field)/first/all);',
-      'numbers, dates and minima are computed in code, not by JEV. Irreversible steps (pay, order, send, delete) always ask first',
+      'needs them. With `result`, the task ends on the results: it applies the site\'s own sorting for select min(field)/max(field)',
+      'and hands you the results list, one line per item: you read it and pick the answer (skip accessories, sponsored or',
+      'unrelated items). result.extract "code" parses items by result.schema in code instead (bulk collection over many pages).',
+      'Irreversible steps (pay, order, send, delete) always ask first',
       'unless policy.irreversible is "allow". Returns the task id immediately.',
     ].join(' '),
     inputSchema: {
@@ -102,9 +111,12 @@ export function registerTaskTools(server: McpServer, deps: ToolDeps): void {
       tab: z.string().optional().describe('Run in this tab id, or "current".'),
       params: z.record(z.string(), paramArg).optional().describe('Named inputs, e.g. {"from": {"value": "Алматы", "about": "departure city"}}.'),
       result: z.object({
-        schema: z.record(z.string(), z.union([z.enum(FIELD_TYPES), z.object({ type: z.enum(FIELD_TYPES), about: z.string().optional() })])),
-        select: z.string().optional().describe('all | first | min(field) | max(field)'),
-      }).optional().describe('Structured result to extract from a results list.'),
+        select: z.string().optional().describe('all | first | min(field) | max(field): min/max make JEV sort the list on the site (e.g. min(price)).'),
+        extract: z.enum(['agent', 'code']).optional().describe('"agent" (default): you get the results list as text and pick the answer. "code": items are parsed by schema.'),
+        pages: z.number().int().min(1).max(10).optional().describe('Result pages or "show more" loads to read before handing over (default 1).'),
+        schema: z.record(z.string(), z.union([z.enum(FIELD_TYPES), z.object({ type: z.enum(FIELD_TYPES), about: z.string().optional() })])).optional()
+          .describe('Fields to parse, for extract "code" (e.g. {"price": "money", "url": "url"}); with "agent" it only names what matters.'),
+      }).optional().describe('The task should end on a results list.'),
       hints: z.array(z.string()).optional().describe('Facts that help JEV, in English (e.g. "The departure field is labelled Откуда").'),
       policy: z.object({
         confidence: confidenceArg.optional(),
@@ -212,7 +224,8 @@ export function registerTaskTools(server: McpServer, deps: ToolDeps): void {
     if (!r.result) return text(`Task ${a.task_id} has no result yet (state ${r.state}).${r.status ? `\n${formatStatus(r.status)}` : ''}`);
     const items = (r.result.items ?? []) as unknown[];
     const limit = a.items_limit ?? 50;
-    const body = formatResult(a.task_id, r.result);
+    const body = formatResult(a.task_id, r.result, limit);
+    if (r.result.page) return text(body);
     return text(items.length ? `${body}\nItems${items.length > limit ? ` (first ${limit} of ${items.length})` : ''}:\n${items.slice(0, limit).map((it, i) => `${i}. ${JSON.stringify(it)}`).join('\n')}` : body);
   }));
 

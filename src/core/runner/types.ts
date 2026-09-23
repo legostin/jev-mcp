@@ -20,9 +20,13 @@ export const taskSpecSchema = z.object({
   tab: z.string().optional(),
   params: z.record(z.string().regex(/^[A-Za-z_]\w*$/, 'param keys are identifiers such as "from" or "departure_date"'), paramSpecSchema).default({}),
   result: z.object({
-    schema: z.record(z.string(), z.union([z.enum(FIELD_TYPES), z.object({ type: z.enum(FIELD_TYPES), about: z.string().optional() })])),
+    schema: z.record(z.string(), z.union([z.enum(FIELD_TYPES), z.object({ type: z.enum(FIELD_TYPES), about: z.string().optional() })])).optional(),
     select: z.string().regex(/^(all|first|(min|max)\(\w+\))$/, 'select is all, first, min(field) or max(field)').optional(),
-  }).optional(),
+    /** "agent": hand the results list to the main agent, which picks the answer; "code": parse items by `schema`. */
+    extract: z.enum(['agent', 'code']).default('agent'),
+    /** Result pages (or "show more" loads) to read before handing the list over. */
+    pages: z.number().int().min(1).max(10).default(1),
+  }).refine((r) => r.extract !== 'code' || !!r.schema, 'extract "code" needs a schema').optional(),
   hints: z.array(z.string()).default([]),
   policy: z.object({
     confidence: confidenceSchema.optional(),
@@ -78,7 +82,15 @@ export interface TaskStats { steps: number; jev_calls: number; escalations: numb
 
 export interface TaskResult {
   status: TaskState;
-  result?: { selected?: Record<string, unknown>; items_count?: number; goal_reached?: boolean };
+  result?: { selected?: Record<string, unknown>; items_count?: number; goal_reached?: boolean; handoff?: boolean };
+  /** extract "agent": the results list for the main agent to read (one line per item). */
+  page?: {
+    url: string; title: string; sorted_by: string | null; items: { i: number; text: string; url: string | null }[];
+    /** The list had more items than were handed over (token budget or further pages). */
+    more: boolean;
+    /** Only when no results list was recognised: a compact view of the page instead. */
+    overview?: string;
+  };
   items?: Record<string, unknown>[];
   evidence?: { url: string; refs: string[]; snippets: string[] };
   warnings?: string[];

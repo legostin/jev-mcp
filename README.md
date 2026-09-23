@@ -49,10 +49,11 @@ JEV does not write text or plan, and that is the point. **Your agent (Claude, GP
 step 1 dismiss_overlay   accepted the cookie consent wall
 step 2 fill_param(from)  typed "Алматы", picked suggestion "Алматы, Казахстан ALA"
 step 3 fill_param(to)    typed "Анталия", picked suggestion "Анталия, Турция AYT"
-step 4 pick_date         navigated to October, chose the cheapest day in range (code computes the minimum)
+step 4 pick_date         opened the calendar, chose the cheapest October day (code computes the minimum)
 step 5 submit            safety check, then "Найти билеты"
-step 6-8 extract         read 30 results across "show more" pages, selected min(price) = 38 900 ₸
-= 8 steps · 24 JEV calls · 0 questions to the agent · $0.0019 · 19 s
+step 6 apply_sort        the site's own "cheapest first" sorting
+step 7 results           the sorted list goes to the agent (or, with extract "code", min(price) = 38 900 ₸)
+= 7 steps · 20 JEV calls · 0 questions to the agent · $0.0015 · 16 s
 ```
 
 - **Grounding eval.** 58 labelled cases over 10 fixture sites cover distractor fields, unlabeled inputs, shadow DOM, cross-origin iframes, "not on this page" cases and param steps: filter chips, values that exist only inside dropdown lists, price fields. Top-1 accuracy is **100%**, median decision time 0.44 s, and the confidence is well calibrated (expected calibration error **0.05**).
@@ -170,7 +171,7 @@ jev uninstall                                  # removes the MCP registrations, 
 
 | Tool | What it does |
 |---|---|
-| `jev_task` | Starts an autonomous browser task: goal, site, params, result schema, policy. Returns immediately. |
+| `jev_task` | Starts an autonomous browser task: goal, site, params, result, policy. Returns immediately; the results list comes back to your agent to read. |
 | `jev_status` · `jev_wait` · `jev_result` | Follow a task: progress, the next question or completion, extracted items. |
 | `jev_answer` | Resolves a JEV question: `pick`, `hint`, `set_param`, `thresholds`, `continue`, `skip`, `abort`; `remember` saves it to site memory. |
 | `jev_control` | Pause, resume, cancel, or update params, hints and thresholds of a running task. |
@@ -193,7 +194,7 @@ Example task:
     "to":     { "value": "Анталия", "about": "destination city" },
     "period": { "value": { "from": "2026-10-01", "to": "2026-10-31" }, "about": "departure date" }
   },
-  "result": { "schema": { "price": "money", "airline": "string", "depart": "time", "url": "url" }, "select": "min(price)" },
+  "result": { "select": "min(price)" },
   "policy": { "confidence": { "preset": "balanced" }, "irreversible": "ask" }
 }
 ```
@@ -222,6 +223,18 @@ Each task step:
 6. **Act and verify.** Trusted CDP input, deterministic checks and a JEV verification. Reversible steps (fields, chips, dropdowns, date pickers, "more filters", sorting, overlays) check their effect; when it is missing, the step is rolled back (history back, Escape, restore the value, re-click a toggle) and the next candidate is tried.
 
 Everything numeric is computed in code: prices, date ranges, minima. JEV's weak spots (arithmetic, counting, dates) are [documented by TypeSafe](https://docs.typesafe.ai/model-jaggedness/jev-1.13), so JEV only makes semantic judgments.
+
+## Who reads the results
+
+JEV is a fast judge of the page, not a reader of long lists. A task with `result` stops on the results: it applies the site's own sorting for `select: "min(field)"` / `"max(field)"` (so the answer is on the first page), finds the page's main results list, and hands it to your agent as one line per item:
+
+```
+Results page: "Sony Wh-1000xm5 for sale" https://shop.example/sch?... (sorted on the site by price, lowest first)
+  0. Replacement ear pads for Sony WH-1000XM5 | $9.99 | Brand new → https://shop.example/itm/1
+  1. Sony WH-1000XM5 Wireless Noise Canceling Headphones, Black | $248.00 | Brand new → https://shop.example/itm/2
+```
+
+The agent picks the answer: it tells headphones from ear pads, sponsored rows from results and odd currencies from prices far better than field-by-field parsing. The list stays within about 4k tokens; `result.pages` reads more pages first. For bulk collection, `result.extract: "code"` parses items by `result.schema` in code and applies `select` (numbers, dates and minima computed exactly).
 
 ## Confidence and human in the loop
 

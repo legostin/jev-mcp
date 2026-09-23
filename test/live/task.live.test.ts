@@ -59,7 +59,7 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
       to: { value: 'Анталия', about: 'destination city' },
       period: { value: { from: '2026-10-01', to: '2026-10-31' }, about: 'departure date' },
     },
-    result: { schema: { price: 'money', airline: 'string', depart: 'time', url: 'url' }, select: 'min(price)' },
+    result: { schema: { price: 'money', airline: 'string', depart: 'time', url: 'url' }, select: 'min(price)', extract: 'code' },
   });
   const pickTop = (q: any) => (q.decision?.candidates?.[0] ? { type: 'pick', ref: q.decision.candidates[0].ref } : { type: 'continue' });
   const templates = async (taskId: string) => {
@@ -78,7 +78,7 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
         to: { value: 'Анталия', about: 'destination city' },
         period: { value: { from: '2026-10-01', to: '2026-10-31' }, about: 'departure date' },
       },
-      result: { schema: { price: 'money', airline: 'string', depart: 'time', url: 'url' }, select: 'min(price)' },
+      result: { schema: { price: 'money', airline: 'string', depart: 'time', url: 'url' }, select: 'min(price)', extract: 'code' },
     });
     const { result, questions } = await runToEnd(created.task_id, (q) => (q.decision?.candidates?.[0] ? { type: 'pick', ref: q.decision.candidates[0].ref } : { type: 'continue' }));
     const trace = await client.call('task.trace', { task_id: created.task_id });
@@ -122,7 +122,8 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
       brand: { value: brand, about: 'car brand (make)' },
       model: { value: model, about: 'car model' },
     },
-    result: { schema: { price: 'money', title: 'string', year: 'number', url: 'url' }, select: 'min(price)' },
+    // Default extract "agent": the task hands the sorted list over and the agent (here: the test) picks.
+    result: { select: 'min(price)' },
   });
   const printSteps = async (taskId: string) => {
     const trace = await client.call('task.trace', { task_id: taskId });
@@ -133,12 +134,14 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     const created = await client.call('task.create', cars('Павлодар', 'Toyota', 'Camry'));
     const { result, questions } = await runToEnd(created.task_id, pickTop);
     await printSteps(created.task_id);
-    console.log('RESULT', JSON.stringify({ selected: result.result?.selected, stats: result.stats }));
+    console.log('RESULT', JSON.stringify({ first: result.page?.items?.slice(0, 5), stats: result.stats }));
     expect(result.status).toBe('done');
-    expect(result.result.selected.price.amount).toBe(650000);
-    expect(result.result.selected.title).toMatch(/Toyota Camry/);
-    // Accessories listed with the cars (and cheaper) are left out.
-    expect(result.result.items_count).toBe(20);
+    expect(result.page.sorted_by).toMatch(/lowest first/);
+    const lines = result.page.items.map((it: any) => it.text) as string[];
+    // Sorted by price: accessories first, then the cheapest car. Telling them apart is the agent's call.
+    expect(lines.findIndex((t) => /Toyota Camry/.test(t) && /650 000/.test(t) && !/Коврики|Чехлы|Фара/.test(t))).toBeGreaterThanOrEqual(0);
+    expect(lines.some((t) => /Коврики/.test(t))).toBe(true);
+    expect(result.page.items.length).toBe(23);
     expect(questions).toHaveLength(0);
   }, 300_000);
 
@@ -146,9 +149,9 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     const created = await client.call('task.create', cars('Караганда', 'Lexus', 'RX 350'));
     const { result, questions } = await runToEnd(created.task_id, pickTop);
     await printSteps(created.task_id);
-    console.log('RESULT', JSON.stringify({ selected: result.result?.selected, stats: result.stats }));
+    console.log('RESULT', JSON.stringify({ first: result.page?.items?.slice(0, 5), stats: result.stats }));
     expect(result.status).toBe('done');
-    expect(result.result.selected.title).toMatch(/Lexus RX 350/);
+    expect(result.page.items.some((it: any) => /Lexus RX 350/.test(it.text) && /650 000/.test(it.text))).toBe(true);
     expect(questions).toHaveLength(0);
   }, 300_000);
 });

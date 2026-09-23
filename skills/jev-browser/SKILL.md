@@ -37,7 +37,7 @@ JEV is a *System One* model. It makes typed decisions (which element, which opti
     "to":     { "value": "Анталья", "about": "destination city" },
     "period": { "value": { "from": "2026-10-01", "to": "2026-10-31" }, "about": "departure date" }
   },
-  "result": { "schema": { "price": "money", "airline": "string", "depart": "time", "url": "url" }, "select": "min(price)" }
+  "result": { "select": "min(price)" }
 }
 ```
 
@@ -45,7 +45,8 @@ JEV is a *System One* model. It makes typed decisions (which element, which opti
 - Dates go as `YYYY-MM-DD` or a `{from,to}` range. A range lets JEV pick the cheapest or earliest day in a low-fare calendar; code does the date math.
 - Use booleans for checkboxes.
 - Credentials go into params with `"secret": true`. JEV never sees those values. Never put secrets in goal or hints.
-- `result.schema` field types: string, number, money, datetime, date, time, duration, url, boolean. `select`: `all` | `first` | `min(f)` | `max(f)`. Parsing and minimums are computed in code, so they are exact.
+- `result` makes the task end on the results. With `select: "min(price)"` or `"max(stars)"` JEV first sorts the list on the site. Then **you get the results list**: one line per item (title, price, short texts, link). Read it and pick the answer yourself: skip accessories, spare parts, sponsored or unrelated items, and report the chosen item with its link. `result.pages` (default 1) reads more pages or "show more" loads first.
+- `result.extract: "code"` parses items in code by `result.schema` (field types: string, number, money, datetime, date, time, duration, url, boolean) and applies `select`. Use it for bulk collection over many pages, where the text list would be too long.
 - Useful `policy` fields: `confidence` (see below), `irreversible: "ask" | "allow"`, `allowed_domains`, `max_steps`, `budget_usd`, `max_items`.
 - The task handles common site behaviour on its own:
   - consent banners;

@@ -6,7 +6,7 @@ import type { TraceStore } from '../trace/store.ts';
 import type { PageModel, ElementNode, Region } from '../perception/types.ts';
 import type { ModelState } from '../perception/model.ts';
 import { diffModels } from '../perception/diff.ts';
-import { describeElement, renderCandidate, renderDiff } from '../perception/render.ts';
+import { describeElement, renderCandidate, renderDiff, renderOverview } from '../perception/render.ts';
 import { parseCalendarCells } from '../perception/calendar.ts';
 import { groundByIntent, type GroundResult, type Intent } from '../questions/templates/ground.ts';
 import { buildAssess, readAssess, type AssessOutput } from '../questions/templates/assess.ts';
@@ -19,7 +19,9 @@ import { buildState } from '../questions/state.ts';
 import { aboutOf, hintsFor, paramCard, paramIntent, stepCard, type Hint, type StepCard } from '../questions/step.ts';
 import { hadEffect, rollbackPlan } from './rollback.ts';
 import { gateChoice, gateNoul, topCandidates } from '../decide/gating.ts';
-import { extractResults, applySelect, type ExtractOutput } from '../extract/extract.ts';
+import { extractResults, applySelect, findResultsList, type ExtractOutput } from '../extract/extract.ts';
+import { listItems, type HandoffItem } from '../extract/handoff.ts';
+import { estimateTokens } from '../util/tokens.ts';
 import { inRange } from '../extract/dates.ts';
 import { deterministicRisk, domainAllowed } from '../safety/rules.ts';
 import { maskSecrets, secretValues } from '../safety/secrets.ts';
@@ -455,7 +457,7 @@ export class Task extends Emitter<TaskEvents> {
   private sortOrder(): string {
     const m = (this.spec.result?.select ?? '').match(/^(min|max)\((\w+)\)$/);
     if (!m) return 'as the goal asks';
-    const fieldSpec = this.spec.result!.schema[m[2]];
+    const fieldSpec = this.spec.result!.schema?.[m[2]];
     const about = (typeof fieldSpec === 'object' && fieldSpec.about) || m[2].replace(/_/g, ' ');
     return m[1] === 'min' ? `by ${about}, lowest first (ascending, cheapest first)` : `by ${about}, highest first (descending)`;
   }
@@ -1485,8 +1487,57 @@ export class Task extends Emitter<TaskEvents> {
     return { outcome: ok ? 'ok' : 'failed', note: `clicked submit ${g.el.ref} "${g.el.name}"${ok ? '' : ' (no visible effect)'}`, action: { type: 'click', ref: g.el.ref } };
   }
 
-  private async extract(model: Model): Promise<Outcome> {
+  private handoffItems: HandoffItem[] = [];
+  private handoffSeen = new Set<string>();
+  private handoffPages = 0;
+
+  /**
+   * extract "agent": JEV brought the task to the results; the main agent reads them and picks the answer. The list
+   * goes over as one line per item (site-sorted when select is min/max), within a token budget.
+   */
+  private async handoff(model: Model): Promise<Outcome> {
     const spec = this.spec.result!;
+    const budget = 4000;
+    const found = await findResultsList(this.qctx(), model, this.spec.goal, this.budget());
+    let fresh: HandoffItem[] = [];
+    if (found.list) {
+      const used = estimateTokens(this.handoffItems);
+      fresh = listItems(model, found.list, budget - used, this.handoffItems.length)
+        .filter((it) => { const key = it.url ?? it.text; if (this.handoffSeen.has(key)) return false; this.handoffSeen.add(key); return true; })
+        .map((it, j) => ({ ...it, i: this.handoffItems.length + j }));
+      this.handoffItems.push(...fresh);
+    }
+    this.handoffPages++;
+    const room = estimateTokens(this.handoffItems) < budget * 0.9;
+    if (found.list && fresh.length && room && this.handoffPages < spec.pages) {
+      const g = await this.groundLoadMore(model, found.list.id);
+      if (g) {
+        await this.click(g);
+        await this.settle();
+        this.loadMoreCount++;
+        return { outcome: 'ok', note: `read ${this.handoffItems.length} results; loading more via ${g.ref} "${g.name}"`, action: { type: 'click', ref: g.ref, purpose: 'load_more' } };
+      }
+    }
+    const total = found.list?.items?.length ?? 0;
+    const warnings: string[] = [];
+    if (!found.list) warnings.push('No results list was recognised on this page: see page.overview, or look with jev_observe on the task tab.');
+    this.finish('done', {
+      result: { handoff: true, items_count: this.handoffItems.length },
+      page: {
+        url: model.url, title: model.title, sorted_by: this.sortedBy ? this.sortOrder() : null, items: this.handoffItems,
+        more: fresh.length < total,
+        ...(found.list ? {} : { overview: renderOverview(model, 1200) }),
+      },
+      items: this.handoffItems as unknown as Record<string, unknown>[],
+      evidence: { url: model.url, refs: [], snippets: [] },
+      warnings,
+    });
+    return { outcome: 'finished', note: `handed ${this.handoffItems.length} results to the agent` };
+  }
+
+  private async extract(model: Model): Promise<Outcome> {
+    if (this.spec.result!.extract !== 'code') return this.handoff(model);
+    const spec = { schema: this.spec.result!.schema!, select: this.spec.result!.select };
     const out: ExtractOutput | null = await extractResults(this.qctx(), model, spec, this.th(), { goal: this.spec.goal, budgetTokens: this.budget(), refDate: this.refDate() });
     if (!out || !out.items.length) {
       const ans = await this.escalate('assess', 'Expected a list of results but could not find one on this page.', { answer_with: ['hint', 'continue', 'abort'] });
