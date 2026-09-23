@@ -425,7 +425,8 @@
    },
    "expect": [
     null,
-    "Марка"
+    "Марка",
+    "Toyota Camry"
    ]
   },
   {
