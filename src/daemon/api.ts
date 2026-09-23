@@ -3,7 +3,7 @@ import { RpcError, ERR } from './protocol.ts';
 import type { BrowserManager, Model, TabHandle } from './browsers.ts';
 import type { Config } from '../core/config/schema.ts';
 import { getPath, redactConfig, saveConfig, setPath, resolveApiKey, maskKey } from '../core/config/store.ts';
-import { resolveThresholds, type Thresholds } from '../core/config/thresholds.ts';
+import { hostOf, thresholdsFor } from '../core/runner/thresholds.ts';
 import type { JevClient, Question, Json } from '../core/jev/types.ts';
 import { playgroundUrl } from '../core/jev/playground.ts';
 import type { TraceStore } from '../core/trace/store.ts';
@@ -32,15 +32,7 @@ export interface DaemonContext {
   extras: Record<string, () => unknown>;
 }
 
-export function hostOf(url: string): string {
-  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
-}
-
-export function thresholdsFor(cfg: Config, url: string, task?: Config['confidence'], live?: Config['confidence']): Thresholds {
-  const host = hostOf(url);
-  const domainEntry = Object.entries(cfg.domains).find(([d]) => host === d || host.endsWith(`.${d}`))?.[1];
-  return resolveThresholds({ global: cfg.confidence, domain: domainEntry?.confidence, task, live });
-}
+export { hostOf, thresholdsFor };
 
 const ACTION_KINDS: Record<string, ElementKind[] | undefined> = {
   type: ['textbox', 'combobox'],

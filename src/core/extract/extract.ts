@@ -62,7 +62,7 @@ async function pickList(ctx: QuestionContext, model: PageModel, goal: string, bu
   }
   const questions: Record<string, Question> = {};
   for (const r of lists) questions[`is_results_${r.id}`] = { type: 'noul', instructions: `Is \`lists.${r.id}\` a list of results for \`goal\`?` };
-  const res = await runQuestions(ctx, { template: 'extract.is_item', state: buildState({ goal, extra: { lists: regions as unknown as Json } }, budget), questions });
+  const res = askFields.length ? await runQuestions(ctx, { template: 'extract.is_item', state: buildState({ goal, extra: { lists: regions as unknown as Json } }, budget), questions });
   callIds.push(res.callId); cost.v += res.costUsd;
   let best: Region | null = null;
   let bestP = 0.5;
@@ -105,13 +105,15 @@ export async function extractResults(
   const allLeaves = itemRefs.map((refs, i) => leavesOf(model, refs, i));
   const sampleIdx = [...allLeaves.keys()].filter((i) => allLeaves[i].length > 0).slice(0, opts.sampleSize ?? 4);
   const fields = Object.keys(spec.schema);
-  const fieldsDesc: Record<string, string> = Object.fromEntries(fields.map((f) => [f, fieldAbout(f, spec.schema[f])]));
+  // URLs come from the item's links in code; JEV only maps text fields.
+  const askFields = fields.filter((f) => fieldType(spec.schema[f]) !== 'url');
+  const fieldsDesc: Record<string, string> = Object.fromEntries(askFields.map((f) => [f, fieldAbout(f, spec.schema[f])]));
   const itemsState: Record<string, Record<string, string>> = {};
   const questions: Record<string, Question> = {};
   for (const i of sampleIdx) {
     const leaves = allLeaves[i];
     itemsState[`i${i}`] = Object.fromEntries(leaves.map((l) => [l.id, describeElement(l.el, { context: false })]));
-    for (const f of fields) {
+    for (const f of askFields) {
       const criteria: Record<string, Json | null> = Object.fromEntries(leaves.map((l) => [l.id, null]));
       criteria.none = `No entry of \`items.i${i}\` is the \`fields.${f}\`.`;
       questions[`f_${i}_${f}`] = { type: 'choice', instructions: `Which entry of \`items.i${i}\` is the \`fields.${f}\` of this item?`, criteria };
@@ -121,17 +123,17 @@ export async function extractResults(
     template: 'extract.field',
     state: buildState({ goal: opts.goal, extra: { fields: fieldsDesc as unknown as Json, items: itemsState as unknown as Json } }, Math.max(opts.budgetTokens, 8000)),
     questions,
-  });
-  callIds.push(res.callId); cost.v += res.costUsd;
+  }) : null;
+  if (res) { callIds.push(res.callId); cost.v += res.costUsd; }
 
   const mapping: Record<string, string | null> = {};
   const mappingConfidence: Record<string, number> = {};
   const warnings: string[] = [];
-  for (const f of fields) {
+  for (const f of askFields) {
     const votes = new Map<string, number>();
     let confSum = 0;
     for (const i of sampleIdx) {
-      const a = choiceOf(res.answers, `f_${i}_${f}`);
+      const a = choiceOf(res!.answers, `f_${i}_${f}`);
       if (a.choice === 'none' || gateChoice(a, th.extract.choice) === 'escalate') continue;
       const leaf = allLeaves[i].find((l) => l.id === a.choice);
       if (!leaf) continue;
