@@ -1,5 +1,15 @@
 # jev-mcp — browser automation MCP server powered by JEV
 
+<p align="center"><img src="docs/assets/social-preview.png" alt="jev-mcp: browser automation MCP server powered by JEV, TypeSafe's System One decision model" width="720"></p>
+
+<p align="center">
+  <a href="https://legostin.github.io/jev-mcp/">Website</a> ·
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Node 22.18+" src="https://img.shields.io/badge/node-%E2%89%A522.18-339933.svg">
+  <img alt="MCP server" src="https://img.shields.io/badge/MCP-server-6f42c1.svg">
+  <img alt="Model: JEV (TypeSafe)" src="https://img.shields.io/badge/model-JEV%20(TypeSafe)-0a84ff.svg">
+</p>
+
 **jev-mcp** is a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that lets **Claude Code, Codex and any MCP-capable AI agent drive a real Chrome browser** using **JEV**, [TypeSafe AI](https://typesafe.ai)'s *System One* decision model. JEV answers typed questions such as "which element is the departure-city input?" or "did that click work?" in about 100 ms. Each answer comes with a **calibrated confidence**, so the tool acts on its own when it is sure and asks your agent when it is not.
 
 > Your agent plans. JEV executes: fast, cheap and transparent. Every decision is traced and can be replayed.
@@ -30,9 +40,9 @@ Usual LLM browser agents send a screenshot or a huge DOM dump to a frontier mode
 
 JEV does not write text or plan, and that is the point. **Your agent (Claude, GPT, Codex) stays the planner.** jev-mcp turns the page into a clean model, and JEV makes the many small decisions: which element, which autocomplete suggestion, whether a cookie wall blocks the page, whether a step succeeded.
 
-### Real run: "cheapest flight Almaty → Antalya in October"
+### Measured results
 
-The end-to-end test on a local airline-search site (Russian UI, consent wall, autocomplete, low-fare calendar, "show more" pagination):
+**Airline-search fixture** (`fixtures/sites/flights.html`, a local imitation of a real airline-search site): Russian UI, a consent wall, an autocomplete, a low-fare calendar and "show more" pagination. The task was "cheapest flight Almaty → Antalya in October":
 
 ```
 step 1 dismiss_overlay   accepted the cookie consent wall
@@ -43,6 +53,18 @@ step 5 submit            safety check, then "Найти билеты"
 step 6-8 extract         read 30 results across "show more" pages, selected min(price) = 38 900 ₸
 = 8 steps · 24 JEV calls · 0 questions to the agent · $0.0019 · 19 s
 ```
+
+- **Grounding eval.** 41 labelled cases over 9 fixture sites cover distractor fields, unlabeled inputs, shadow DOM, cross-origin iframes and "not on this page" cases. Top-1 accuracy is **100%**, median decision time 0.45 s, and the confidence is well calibrated (expected calibration error **0.02**).
+- **Live aviasales.kz, headless Chrome.** JEV went through the real site:
+  - accepted the consent banner;
+  - noticed the origin was already prefilled;
+  - picked the destination from the autocomplete;
+  - chose the cheapest October day in the site's low-fare calendar;
+  - submitted the search and followed the results into the new tab the site opened.
+
+  The results page then showed a reCAPTCHA to the headless browser. jev-mcp recognises it and asks the agent to have a person solve it: use the extension driver or a visible browser for sites like this.
+
+<p align="center"><img src="docs/assets/ui-timeline.png" alt="jev-mcp debug UI: task timeline with JEV probability bars, confidence thresholds, screenshots and TypeSafe playground links" width="860"></p>
 
 ## Features
 
@@ -84,6 +106,7 @@ Requirements: Node.js ≥ 22.18, Google Chrome (or Chromium), and an OpenRouter 
 git clone https://github.com/legostin/jev-mcp.git
 cd jev-mcp
 npm install
+npm run build:web                                          # builds the Chrome extension and the debug UI
 node bin/jev.mjs install                                   # registers the MCP server in Claude Code / Codex, links the skill and the `jev` CLI
 jev settings set providers.openrouter.apiKey -             # paste your key on stdin; stored in ~/.config/jev-browser/config.json (0600)
 jev doctor                                                 # checks the key, JEV latency, Chrome and the extension
@@ -212,6 +235,11 @@ Any value from 0 to 1 is allowed; `escalate: 0` disables confidence-driven quest
 - **Calibration** shows reliability per template, estimated from verified steps and agent answers.
 - `jev observe`, `jev find "<query>"` and `jev tabs` work from the terminal.
 
+<p align="center">
+  <img src="docs/assets/ui-inspector.png" alt="Page inspector: regions and elements of a real results page as JEV sees them" width="420">
+  <img src="docs/assets/ui-tasks.png" alt="Task list with states, JEV calls, questions and cost" width="420">
+</p>
+
 ## Development
 
 ```bash
@@ -238,7 +266,22 @@ The code is TypeScript and runs natively on Node's type stripping, so the daemon
 
 ## Status and roadmap
 
-jev-mcp is under active development. The core, the task loop, the MCP tools and the tests are in place. Work continues on the extension side panel, the debug UI and calibration tooling. Issues and PRs are welcome.
+All five stages of the design are implemented and tested:
+1. core perception and the JEV client;
+2. the autonomous task loop and MCP tools;
+3. the Chrome extension driver with the side panel;
+4. the debug UI;
+5. site memory and calibration.
+
+There are 111 automated tests, plus live tests and evals against JEV.
+
+Next up:
+- more real-site evals;
+- a hosted gallery of anonymised traces;
+- per-site hint packs;
+- publishing to npm.
+
+Issues and PRs are welcome.
 
 ## License
 

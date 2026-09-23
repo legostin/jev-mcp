@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jev-mcp — Browser automation MCP server powered by JEV (TypeSafe System One)</title>
+<meta name="description" content="Open-source MCP server that lets Claude Code, Codex and AI agents drive a real Chrome browser with JEV: ~100 ms typed decisions, calibrated confidence, human-in-the-loop questions, safety gates and a debug UI.">
+<meta name="keywords" content="MCP server, Model Context Protocol, browser automation, AI browser agent, Claude Code browser, Codex browser, Chrome automation, Chrome extension, Chrome DevTools Protocol, JEV, TypeSafe AI, System One model, OpenRouter, web automation, web scraping">
+<meta name="author" content="legostin">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://legostin.github.io/jev-mcp/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="jev-mcp">
+<meta property="og:title" content="jev-mcp — Browser automation MCP server powered by JEV">
+<meta property="og:description" content="Claude Code, Codex and AI agents drive a real Chrome with ~100 ms typed decisions, calibrated confidence and human-in-the-loop questions.">
+<meta property="og:url" content="https://legostin.github.io/jev-mcp/">
+<meta property="og:image" content="https://legostin.github.io/jev-mcp/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="jev-mcp: browser automation MCP server powered by JEV">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="jev-mcp — Browser automation MCP server powered by JEV">
+<meta name="twitter:description" content="Typed, calibrated browser decisions in ~100 ms for Claude Code, Codex and any MCP client.">
+<meta name="twitter:image" content="https://legostin.github.io/jev-mcp/assets/og.png">
+<meta name="theme-color" content="#0b1220">
+<link rel="icon" href="assets/og.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "jev-mcp",
+  "alternateName": "JEV Browser MCP",
+  "description": "MCP server that lets Claude Code, Codex and other AI agents drive a real Chrome browser with JEV, TypeSafe's System One decision model: typed decisions in ~100 ms, calibrated confidence, human-in-the-loop questions, safety gates, site memory and a debug UI.",
+  "codeRepository": "https://github.com/legostin/jev-mcp",
+  "url": "https://legostin.github.io/jev-mcp/",
+  "programmingLanguage": "TypeScript",
+  "runtimePlatform": "Node.js",
+  "license": "https://opensource.org/licenses/MIT",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS, Linux",
+  "keywords": "MCP server, Model Context Protocol, browser automation, Claude Code, Codex, Chrome extension, CDP, JEV, TypeSafe, OpenRouter",
+  "author": { "@type": "Person", "name": "legostin", "url": "https://github.com/legostin" },
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "What is JEV?", "acceptedAnswer": { "@type": "Answer", "text": "JEV is TypeSafe AI's first System One model. Instead of generating text it returns typed decisions (choice, score, yes/no) with calibrated probabilities in about 100 ms, which makes it ideal for the many small decisions a browser agent makes." } },
+    { "@type": "Question", "name": "How is jev-mcp different from Playwright MCP or browser-use?", "acceptedAnswer": { "@type": "Answer", "text": "Those tools route every browser decision through an LLM. jev-mcp moves element grounding, page assessment and verification to JEV (much cheaper and faster, with calibrated confidence) and keeps your agent for planning and ambiguous cases, asking it only when JEV is unsure." } },
+    { "@type": "Question", "name": "Which AI agents can use jev-mcp?", "acceptedAnswer": { "@type": "Answer", "text": "Any Model Context Protocol client: Claude Code (with optional channel push of questions), Codex, Cursor and others over stdio." } },
+    { "@type": "Question", "name": "Can it use my logged-in Chrome?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. The jev Chrome extension relays the Chrome DevTools Protocol through chrome.debugger after a one-time pairing, and adds a side panel with tasks, questions and a confidence slider. Without it, jev-mcp uses its own Chrome profile, headful or headless." } },
+    { "@type": "Question", "name": "How much does it cost to run?", "acceptedAnswer": { "@type": "Answer", "text": "jev-mcp is MIT-licensed. JEV costs $0.042 per million input tokens with free output via OpenRouter or the TypeSafe API; a typical multi-step browser task costs a fraction of a cent." } },
+    { "@type": "Question", "name": "Is it safe to let it click?", "acceptedAnswer": { "@type": "Answer", "text": "Irreversible actions such as paying, ordering, sending or deleting always require confirmation, secret params are never shown to the model, hidden text is excluded from the page model, and every decision is traced locally." } }
+  ]
+}
+</script>
+<style>
+  :root { --bg: #ffffff; --fg: #111827; --muted: #4b5563; --line: #e5e7eb; --card: #f8fafc; --accent: #0a60ff; --code: #0b1220; --codefg: #e2e8f0; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0b1220; --fg: #e5e7eb; --muted: #9ca3af; --line: #1f2937; --card: #111a2e; --accent: #7cc4ff; --code: #060b16; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 17px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  a { color: var(--accent); }
+  header.hero { padding: 72px 20px 48px; text-align: center; background: radial-gradient(900px 400px at 70% 0%, #1d4ed833, transparent); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+  h1 { font-size: clamp(34px, 5vw, 56px); line-height: 1.08; letter-spacing: -1px; margin: 0 0 18px; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lead { font-size: 21px; color: var(--muted); max-width: 780px; margin: 0 auto 28px; }
+  .cta { display: inline-flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .btn { padding: 12px 20px; border-radius: 10px; text-decoration: none; font-weight: 600; border: 1px solid var(--line); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  section { padding: 44px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 30px; margin: 0 0 18px; letter-spacing: -.5px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 18px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15.5px; }
+  pre { background: var(--code); color: var(--codefg); padding: 16px 18px; border-radius: 12px; overflow: auto; font-size: 14px; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; font-size: 15.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  img.shot { width: 100%; border-radius: 12px; border: 1px solid var(--line); }
+  details { border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin: 10px 0; background: var(--card); }
+  summary { font-weight: 600; cursor: pointer; }
+  footer { padding: 36px 20px 60px; text-align: center; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <h1>Browser automation MCP server<br>powered by <em>JEV</em></h1>
+    <p class="lead"><strong>jev-mcp</strong> lets Claude Code, Codex and any MCP client drive a real Chrome browser. JEV, TypeSafe's System One model, makes the typed decisions in ~100 ms with calibrated confidence, and asks your agent only when it is unsure.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/legostin/jev-mcp">View on GitHub</a>
+      <a class="btn" href="#quick-start">Quick start</a>
+      <a class="btn" href="#faq">FAQ</a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section>
+    <h2>Why a decision model for browser agents?</h2>
+    <table>
+      <tr><th></th><th>LLM-only browser agent</th><th>jev-mcp with JEV</th></tr>
+      <tr><td>Per decision</td><td>2–20 seconds</td><td><strong>~100 ms</strong></td></tr>
+      <tr><td>Cost</td><td>cents per step</td><td><strong>$0.042 / million input tokens</strong>, output free</td></tr>
+      <tr><td>Output</td><td>free text to parse</td><td><strong>typed</strong> choice, score, yes/no</td></tr>
+      <tr><td>Uncertainty</td><td>overconfident</td><td><strong>calibrated</strong>: act, double-check or ask</td></tr>
+      <tr><td>Agent context</td><td>HTML dumps and screenshots</td><td>compact, filtered page views</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Features</h2>
+    <div class="grid">
+      <div class="card"><h3>Autonomous tasks</h3><p>Goal, params and a result schema in. Out come dismissed consent walls, filled autocompletes and date pickers, a submitted search and extracted results with min/max selection.</p></div>
+      <div class="card"><h3>Page understanding</h3><p>DOM, accessibility tree and paint order become regions and stable element refs. Unlabeled inputs get names, and occlusion, shadow DOM and cross-origin iframes are handled.</p></div>
+      <div class="card"><h3>Human in the loop</h3><p>Low-confidence decisions become questions with candidates and probabilities. They arrive through Claude Code channels, <code>jev watch</code> or any tool result.</p></div>
+      <div class="card"><h3>Your Chrome or ours</h3><p>A paired Chrome extension drives your logged-in browser, with a side panel. Otherwise jev-mcp uses its own headful or headless Chrome profile.</p></div>
+      <div class="card"><h3>Safety gates</h3><p>Irreversible actions ask first, secrets are never shown to the model, hidden prompt-injection text is dropped, and domain allow-lists and budgets are enforced.</p></div>
+      <div class="card"><h3>Debug UI and calibration</h3><p>Probability bars for every decision, replay, TypeSafe playground links, site memory and reliability diagrams that suggest thresholds.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Measured results</h2>
+    <p>On the airline-search fixture (Russian UI, consent wall, autocomplete, low-fare calendar, pagination), the task "cheapest flight Almaty → Antalya in October" finished in <strong>8 steps, 24 JEV calls, 0 questions, $0.0019, 19 s</strong>. The grounding eval scored <strong>41/41 (100%)</strong> with an expected calibration error of <strong>0.02</strong>. On live aviasales.kz, JEV went through consent, autocomplete, the low-fare calendar and a results tab that opened separately.</p>
+    <img class="shot" src="assets/ui-timeline.png" alt="jev-mcp debug UI: step timeline with JEV probability bars and confidence thresholds" loading="lazy">
+  </section>
+
+  <section id="quick-start">
+    <h2>Quick start</h2>
+<pre><code>git clone https://github.com/legostin/jev-mcp.git && cd jev-mcp
+npm install && npm run build:web
+node bin/jev.mjs install                       # Claude Code + Codex MCP, skill, `jev` CLI
+jev settings set providers.openrouter.apiKey - # or: jev settings set provider typesafe
+jev doctor</code></pre>
+    <p>Then ask your agent: <em>"Find the cheapest flight from Almaty to Antalya in October on aviasales.kz"</em>. It will call <code>jev_task</code> and keep working while JEV runs.</p>
+  </section>
+
+  <section>
+    <h2>MCP tools</h2>
+    <table>
+      <tr><td><code>jev_task</code>, <code>jev_status</code>, <code>jev_wait</code>, <code>jev_answer</code>, <code>jev_control</code>, <code>jev_result</code></td><td>Autonomous tasks and their questions</td></tr>
+      <tr><td><code>jev_observe</code>, <code>jev_find</code>, <code>jev_ask</code></td><td>Cheap page understanding and custom typed questions</td></tr>
+      <tr><td><code>jev_act</code>, <code>jev_tabs</code>, <code>jev_screenshot</code></td><td>Direct, trusted browser control</td></tr>
+      <tr><td><code>jev_trace</code>, <code>jev_settings</code>, <code>jev_doctor</code></td><td>Traces, settings and diagnostics</td></tr>
+    </table>
+  </section>
+
+  <section id="faq">
+    <h2>FAQ</h2>
+    <details open><summary>What is JEV?</summary><p>JEV is TypeSafe AI's first System One model. It returns typed decisions (choice, score, yes/no) with calibrated probabilities instead of generating text. See the <a href="https://docs.typesafe.ai/introduction">TypeSafe docs</a> and the <a href="https://openrouter.ai/docs/guides/community/jev">OpenRouter guide</a>.</p></details>
+    <details><summary>How is it different from Playwright MCP or browser-use?</summary><p>Those tools route every decision through an LLM. jev-mcp moves grounding, assessment and verification to JEV, which is much cheaper and faster and has calibrated confidence. Your agent still does the planning and handles ambiguity.</p></details>
+    <details><summary>Which agents can use it?</summary><p>Any MCP client: Claude Code (with optional channel push), Codex, Cursor and others over stdio.</p></details>
+    <details><summary>Can it use my logged-in Chrome?</summary><p>Yes, through the Chrome extension after a one-time pairing. Without the extension it uses its own profile.</p></details>
+    <details><summary>How much does it cost?</summary><p>jev-mcp is free (MIT). JEV costs $0.042 per million input tokens and output is free; a typical task costs a fraction of a cent.</p></details>
+    <details><summary>Is it safe to let it click?</summary><p>Payments, orders, messages and deletions always ask first, secrets never reach the model, and every decision is traced locally.</p></details>
+  </section>
+</main>
+
+<footer>
+  <p><a href="https://github.com/legostin/jev-mcp">github.com/legostin/jev-mcp</a> · MIT license · JEV and TypeSafe are trademarks of TypeSafe AI; jev-mcp is an independent community project.</p>
+</footer>
+</body>
+</html>

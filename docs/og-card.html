@@ -1,0 +1,33 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  body { margin: 0; width: 1280px; height: 640px; font-family: -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+         background: radial-gradient(1200px 600px at 85% 20%, #1d4ed8 0%, #0b1220 55%); color: #fff; display: flex; }
+  .wrap { padding: 72px 80px; display: flex; flex-direction: column; justify-content: space-between; width: 100%; }
+  .logo { display: flex; align-items: center; gap: 18px; font-size: 30px; font-weight: 700; letter-spacing: -.5px; }
+  .logo span { width: 56px; height: 56px; border-radius: 14px; background: #0a84ff; display: grid; place-items: center; font-size: 34px; }
+  h1 { font-size: 64px; line-height: 1.05; margin: 0; letter-spacing: -1.5px; max-width: 1000px; }
+  h1 em { font-style: normal; color: #7cc4ff; }
+  p { font-size: 28px; color: #c7d2fe; margin: 18px 0 0; max-width: 1050px; }
+  .chips { display: flex; gap: 12px; flex-wrap: wrap; }
+  .chip { font-size: 22px; padding: 8px 16px; border-radius: 999px; background: #ffffff14; border: 1px solid #ffffff2a; }
+  .bars { position: absolute; right: 80px; bottom: 56px; width: 270px; }
+  .bar { height: 16px; border-radius: 8px; background: #ffffff1c; margin: 12px 0; position: relative; }
+  .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; background: #34c759; }
+  .bar.b i { background: #7cc4ff; }
+  .lbl { font-size: 16px; color: #a5b4fc; display: flex; justify-content: space-between; }
+  .bar { height: 12px; margin: 6px 0 10px; }
+</style></head><body>
+<div class="bars">
+  <div class="lbl"><span>e12 textbox "Откуда"</span><span>0.97</span></div><div class="bar"><i style="width:97%"></i></div>
+  <div class="lbl"><span>e31 textbox "Город"</span><span>0.02</span></div><div class="bar b"><i style="width:3%"></i></div>
+  <div class="lbl"><span>none</span><span>0.01</span></div><div class="bar b"><i style="width:2%"></i></div>
+</div>
+<div class="wrap">
+  <div class="logo"><span>J</span>jev-mcp</div>
+  <div>
+    <h1>Browser automation MCP server<br>powered by <em>JEV</em></h1>
+    <p>Claude Code, Codex &amp; AI agents drive a real Chrome with ~100 ms typed decisions and calibrated confidence.</p>
+  </div>
+  <div class="chips"><span class="chip">MCP server</span><span class="chip">Chrome extension</span><span class="chip">Human-in-the-loop</span><span class="chip">Debug UI</span><span class="chip">MIT</span></div>
+</div>
+</body></html>
