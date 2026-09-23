@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 /** Names with volatile numbers ("Pay 41 230 ₸", "3 items") keep their shape but not their digits. */
 export function normalizeName(name: string): string {
-  return name.toLowerCase().replace(/\d[\d\s.,]*/g, '#').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return name.toLowerCase().replace(/\d+(?:[\s.,]\d+)*/g, '#').replace(/\s+/g, ' ').trim().slice(0, 60);
 }
 
 /** Strips generated suffixes from ids and classes: "dst-9f2c1a" -> "dst", "field_1234" -> "field". */
