@@ -1,0 +1,36 @@
+{
+  "name": "jev-browser",
+  "version": "0.1.0",
+  "description": "Browser control for AI agents, driven by JEV (TypeSafe System One) decisions.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "jev": "bin/jev.mjs"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:live": "JEV_LIVE=1 vitest run test/live",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
+    "build:web": "node scripts/build-web.mjs",
+    "eval": "JEV_LIVE=1 node evals/run.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "lz-string": "^1.5.0",
+    "preact": "^10.29.8",
+    "ws": "^8.21.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@puppeteer/browsers": "^3.2.3",
+    "@types/chrome": "^0.3.0",
+    "@types/node": "^26.6.2",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

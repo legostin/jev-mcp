@@ -1,0 +1,6 @@
+node_modules/
+dist/
+evals/last-report.json
+*.log
+.DS_Store
+.jev-test-home*/
