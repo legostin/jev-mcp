@@ -110,6 +110,20 @@ Claude Code / Codex ──stdio──▶ jev mcp          (тонкий прок
 | `extension` | MV3: CDP-реле через `chrome.debugger`, боковая панель, сопряжение, обнаружение перехвата управления | `daemon` WS |
 | `ui` | Debug UI (SPA), раздаётся демоном | `daemon` HTTP |
 
+### Язык
+
+**Весь код, идентификаторы, комментарии и пользовательский интерфейс — только на английском.** Сюда входят:
+- имена и описания инструментов MCP, поле `instructions` сервера, тексты channel-событий;
+- вывод и справка CLI, сообщения об ошибках, логи;
+- Debug UI, боковая панель и страницы расширения;
+- тексты эскалаций (`summary`), skill `jev-browser`, README, сообщения коммитов.
+
+Данные пользователя не переводятся: значения параметров, текст страниц, подписи элементов.
+Skill рекомендует основному агенту писать `goal`, `about` и `hints` на английском: JEV точнее всего на
+английском. Значения параметров остаются в том виде, в каком они встречаются на сайте («Алматы»).
+
+### Стек и структура
+
 Монорепо на npm workspaces, TypeScript, Node ≥ 22 (установлен v24.13). Пакеты: `packages/core`,
 `packages/daemon`, `packages/mcp`, `packages/cli`, `packages/extension`, `packages/ui`.
 Плюс `fixtures/sites/` (тестовые сайты), `evals/` (размеченные снимки и прогонщик),
@@ -308,13 +322,13 @@ Claude Code / Codex ──stdio──▶ jev mcp          (тонкий прок
 
 ```jsonc
 {
-  "goal": "Найти самый дешёвый билет",
+  "goal": "Find the cheapest ticket",
   "site": "https://aviasales.kz",                     // или "tab": "<id>" | "current"
   "params": {
-    "from":   { "value": "Алматы",  "about": "город вылета" },
-    "to":     { "value": "Анталия", "about": "город назначения" },
-    "period": { "value": { "from": "2026-10-01", "to": "2026-10-31" }, "about": "даты вылета" },
-    "login":  { "value": "…", "about": "email аккаунта", "secret": true }
+    "from":   { "value": "Алматы",  "about": "departure city" },
+    "to":     { "value": "Анталия", "about": "destination city" },
+    "period": { "value": { "from": "2026-10-01", "to": "2026-10-31" }, "about": "departure dates" },
+    "login":  { "value": "…", "about": "account email", "secret": true }
   },
   "result": { "schema": { "price": "money", "airline": "string", "depart": "datetime", "url": "url" },
               "select": "min(price)" },               // min | max | first | all
@@ -382,7 +396,7 @@ Claude Code / Codex ──stdio──▶ jev mcp          (тонкий прок
 {
   "question_id": "q7", "task_id": "t3",
   "kind": "ground",   // ground | subintent | assess | risk_confirm | missing_param | blocker | stuck | off_domain | budget
-  "summary": "Не уверен, какое поле соответствует параметру `from` (город вылета)",
+  "summary": "Unsure which field is the input for param `from` (departure city)",
   "page": { "url": "…", "page_kind": { "search_form": 0.91, "other": 0.09 },
             "regions": ["r1 header", "r3 search form (12 el.)", "r7 subscribe form (2 el.)"] },
   "decision": {
