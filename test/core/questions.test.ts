@@ -143,3 +143,13 @@ describe('groundByIntent', () => {
     expect(res).toMatchObject({ ref: 'e60', stage: 'region', decision: 'act' });
   });
 });
+
+describe('value labels in grounding', () => {
+  it('acts without a second look when the uncertain leader shows exactly the value', async () => {
+    const jev = createScriptedClient(() => ({ pick: choice({ e1: 0.7, e2: 0.2, none: 0.1 }, 0.7), exists: noulAnswer(0.9), fallback: choice({ e2: 0.9, none: 0.1 }, 0.9), fallback_exists: noulAnswer(0.9) }));
+    const res = await groundByIntent({ jev }, model([el('e1', 'Toyota (1 234)', 'button'), el('e2', 'Марка', 'button')]),
+      { target: 'the control that sets the brand to "Toyota"', value: 'Toyota', fallback: 'brand field' }, PRESETS.balanced, { budgetTokens: 6000 });
+    expect(res).toMatchObject({ ref: 'e1', decision: 'act', stage: 'direct' });
+    expect(jev.requests).toHaveLength(1);
+  });
+});

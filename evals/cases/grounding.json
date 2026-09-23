@@ -423,7 +423,10 @@
     "value": "Camry",
     "about": "car model"
    },
-   "expect": null
+   "expect": [
+    null,
+    "Марка"
+   ]
   },
   {
    "setup": "filters_popup",

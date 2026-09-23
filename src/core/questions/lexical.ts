@@ -26,3 +26,14 @@ export function lexicalScore(query: string[], el: ElementNode): number {
   }
   return score / query.length;
 }
+
+export const normalizeLabel = (s: string): string => s.toLowerCase().replace(/ё/g, 'е').replace(/[\s\u00a0]+/g, ' ').trim();
+
+/** Is this control's label the value itself? Ignores dropdown arrows and trailing counts ("Toyota (1 234)", "Toyota 1234"). */
+export function isValueLabel(name: string, want: string): boolean {
+  const n = normalizeLabel(name).replace(/[\s▾▼⌄›»✓✔]+$/u, '');
+  if (!n || !want) return false;
+  if (n === want) return true;
+  const m = n.match(/^(.*?\S)\s*(?:\(\s*\d[\d\s.,]*\)|\s\d[\d\s.,]*)$/u);
+  return !!m && m[1] === want;
+}

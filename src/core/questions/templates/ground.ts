@@ -7,7 +7,7 @@ import { runQuestions, choiceOf, noulOf, type QuestionContext } from '../run.ts'
 import { gateChoice, gateNoul, topCandidates } from '../../decide/gating.ts';
 import { fuse } from '../../decide/fuse.ts';
 import type { StepCard } from '../step.ts';
-import { lexicalScore, tokens } from '../lexical.ts';
+import { isValueLabel, lexicalScore, normalizeLabel, tokens } from '../lexical.ts';
 
 export interface Intent {
   /** Plain-English description of the target, e.g. "the input for the departure city". */
@@ -28,6 +28,8 @@ export interface Intent {
    * to V" (a button showing V is best) and `fallback` is the field where X is chosen (V is not shown as a button).
    */
   fallback?: string;
+  /** The value being set: a leader whose visible label is exactly this value needs no second look. */
+  value?: string;
 }
 
 export interface GroundCandidate { ref: string; p: number; desc: string }
@@ -193,6 +195,11 @@ export async function groundByIntent(
   }
   const gate = gateChoice(pick, th.ground.choice);
   if (gate === 'act') return { ...base, ref: pick.choice, decision: 'act' };
+  // JEV's leader shows exactly the requested value ("Toyota" for brand = Toyota): two independent signals agree.
+  const leader = model.elements.get(pick.choice);
+  if (intent.value && leader && gate === 'uncertain' && (isValueLabel(leader.name, normalizeLabel(intent.value)) || isValueLabel(leader.text ?? '', normalizeLabel(intent.value)))) {
+    return { ...base, ref: pick.choice, decision: 'act' };
+  }
 
   // Second look: the top candidates as compact cards (with the row they sit in).
   const top = candidates.filter((c) => c.p >= 0.02).slice(0, 3);

@@ -446,6 +446,23 @@ export class Task extends Emitter<TaskEvents> {
     return m[1] === 'min' ? `by ${about}, lowest first (ascending, cheapest first)` : `by ${about}, highest first (descending)`;
   }
 
+  /**
+   * Memory keys for a step: a remembered value button ("Павлодар") only serves the same value, a remembered field
+   * serves any value. Lookups try the value key first.
+   */
+  private memKeys(sub: Subintent, memoryKey: string): string[] {
+    const p = sub.type === 'fill_param' ? this.params[sub.key] : undefined;
+    if (!p || p.secret || typeof p.value === 'boolean') return [memoryKey];
+    return [`${memoryKey}=${normalizeText(String(p.value))}`, memoryKey];
+  }
+
+  private memKeyFor(sub: Subintent, memoryKey: string, el: ElementNode): string {
+    const [valueKey, fieldKey] = this.memKeys(sub, memoryKey);
+    if (!fieldKey) return valueKey;
+    const want = normalizeText(String((this.params as Record<string, ParamSpec>)[(sub as { key: string }).key].value));
+    return isValueLabel(el.name, want) || isValueLabel(el.text ?? '', want) ? valueKey : fieldKey;
+  }
+
   /** What the step does, for JEV: the param and its value, or the step's purpose. */
   private card(sub: Subintent): StepCard {
     const key = 'key' in sub ? sub.key.split(':')[0] : undefined;
@@ -464,8 +481,8 @@ export class Task extends Emitter<TaskEvents> {
 
   /**
    * Grounding with memory fast path, forced refs from answers, trials and escalation when unsure. `trial` in the
-   * result means the element is a best guess for a reversible step: the caller verifies the effect and calls
-   * `trialFailed` (roll back, try the next) when it did not work.
+   * result means the step is reversible and has tries left: the caller verifies the effect and calls `trialFailed`
+   * (roll back, try the next candidate) when it did not work. Low-confidence leaders are only returned as trials.
    */
   private async ground(sub: Subintent, intent: Intent, memoryKey?: string): Promise<{ el: ElementNode | null; res?: GroundResult; answer?: AnswerInput; trial?: boolean }> {
     const model = this.model!;
@@ -483,12 +500,17 @@ export class Task extends Emitter<TaskEvents> {
     const host = hostOf(model.url);
     const pageKind = this.assessCache?.out.pageKind ?? 'other';
     if (memoryKey && this.deps.memory && this.deps.getConfig().memory.enabled) {
-      const hit = this.deps.memory.lookup(host, pageKind, memoryKey);
-      const el = hit ? [...model.elements.values()].find((e) => e.sig === hit.sig && e.visible && !intent.exclude!.includes(e.sig)) : undefined;
+      let hit = null;
+      let el: ElementNode | undefined;
+      for (const key of this.memKeys(sub, memoryKey)) {
+        hit = this.deps.memory.lookup(host, pageKind, key);
+        el = hit ? [...model.elements.values()].find((e) => e.sig === hit!.sig && e.visible && !intent.exclude!.includes(e.sig)) : undefined;
+        if (hit && el) break;
+      }
       if (hit && el) {
         // A remembered element for a reversible step is simply tried first: the effect check confirms it.
         if (trial) {
-          this.memoryUse = { id: hit.id, host, pageKind, key: memoryKey };
+          this.memoryUse = { id: hit.id, host, pageKind, key: hit.key };
           return { el, trial: true };
         }
         const res = await runQuestions(this.qctx(), {
@@ -498,7 +520,7 @@ export class Task extends Emitter<TaskEvents> {
         });
         // The agent or a verified step confirmed this element before: keep it unless JEV clearly disagrees.
         if (gateNoul(noulOf(res.answers, 'same'), th.ground.noul) !== 'no') {
-          this.memoryUse = { id: hit.id, host, pageKind, key: memoryKey };
+          this.memoryUse = { id: hit.id, host, pageKind, key: hit.key };
           return { el };
         }
         this.deps.memory.recordFailure(hit.id);
@@ -506,9 +528,11 @@ export class Task extends Emitter<TaskEvents> {
     }
     const res = await groundByIntent(this.qctx(), model, intent, th, { goal: this.spec.goal, step: card, hints: hintsFor(this.hints, card), budgetTokens: this.budget() });
     if ((res.decision === 'act' || res.decision === 'try') && res.ref) {
-      if (memoryKey) this.memoryUse = { id: null, host, pageKind, key: memoryKey, sig: model.elements.get(res.ref)!.sig };
+      const el = model.elements.get(res.ref)!;
+      if (memoryKey) this.memoryUse = { id: null, host, pageKind, key: this.memKeyFor(sub, memoryKey, el), sig: el.sig };
       this.groundCalls = res.callIds;
-      return { el: model.elements.get(res.ref)!, res, trial: res.decision === 'try' };
+      // Reversible steps verify and roll back whatever the confidence: a confident pick can still be the wrong list.
+      return { el, res, trial };
     }
     if (res.decision === 'none') return { el: null, res };
     const thc = th.ground.choice;
@@ -525,7 +549,7 @@ export class Task extends Emitter<TaskEvents> {
     if (answer.type === 'pick') {
       const fresh = await this.observe(false);
       const el = fresh.elements.get(answer.ref) ?? null;
-      if (el && answer.remember && memoryKey && this.deps.memory) this.deps.memory.recordSuccess(host, pageKind, memoryKey, el.sig);
+      if (el && answer.remember && memoryKey && this.deps.memory) this.deps.memory.recordSuccess(host, pageKind, this.memKeyFor(sub, memoryKey, el), el.sig);
       // The agent's pick is ground truth for the trace (calibration labels).
       for (const id of res.callIds) this.deps.trace.labelCall(id, res.ref === answer.ref, 'agent pick');
       return { el, res, answer };

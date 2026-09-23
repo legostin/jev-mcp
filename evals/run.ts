@@ -16,7 +16,7 @@ import type { PresetName } from '../src/core/config/schema.ts';
 
 interface Setup { fixture: string; wait?: number; steps: { click: string }[] }
 /** A raw target, or a param step (the intent is built exactly as the runner builds it). `expect` may list equivalent names. */
-interface Case { setup: string; target?: string; param?: { key: string; value: string | boolean; about: string }; kinds?: any[]; expect: string | string[] | null }
+interface Case { setup: string; target?: string; param?: { key: string; value: string | boolean; about: string }; kinds?: any[]; expect: string | Array<string | null> | null }
 
 const dir = fileURLToPath(new URL('.', import.meta.url));
 // Names without trailing dropdown arrows (CSS ::after content is part of the accessible name).
@@ -64,8 +64,9 @@ try {
     }
     const res = await groundByIntent({ jev, trace }, model, intent, th, { step, budgetTokens: cfg.limits.stateTokenTarget });
     const got = res.ref ? norm(model.elements.get(res.ref)?.name ?? '') || null : null;
-    const accepted = c.expect === null ? [] : Array.isArray(c.expect) ? c.expect : [c.expect];
-    const ok = c.expect === null ? res.decision === 'none' || !res.ref : got !== null && accepted.includes(got);
+    // `expect` may list equivalent names; null in the list accepts "not on the page".
+    const accepted = c.expect === null ? [null] : Array.isArray(c.expect) ? c.expect : [c.expect];
+    const ok = accepted.includes(null) && (res.decision === 'none' || !res.ref) ? true : got !== null && accepted.includes(got);
     for (const id of res.callIds) trace?.labelCall(id, ok, 'eval');
     rows.push({ c, got, decision: res.decision, confidence: res.confidence, exists: res.exists, ok, callIds: res.callIds, ms: Date.now() - started });
     const what = c.param ? `${c.param.key} = ${JSON.stringify(c.param.value)}` : c.target;

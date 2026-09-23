@@ -67,6 +67,8 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     return trace.steps.flatMap((s: any) => s.calls.map((c: any) => c.template)) as string[];
   };
 
+  let firstRunCalls = 0;
+
   it('finds the cheapest October flight Almaty → Antalya', async () => {
     const created = await client.call('task.create', {
       goal: 'Find the cheapest flight ticket from Almaty to Antalya departing in October 2026',
@@ -86,6 +88,7 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(result.result.selected.price.amount).toBe(38900);
     expect(result.result.items_count).toBeGreaterThanOrEqual(10);
     expect(questions.length).toBeLessThanOrEqual(2);
+    firstRunCalls = (await templates(created.task_id)).length;
   }, 300_000);
 
   it('follows results that open in a new tab', async () => {
@@ -105,9 +108,45 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(result.status).toBe('done');
     expect(result.result.selected.price.amount).toBe(38900);
     const used = await templates(created.task_id);
-    const memory = used.filter((t) => t === 'ground.memory_confirm').length;
     const full = used.filter((t) => t === 'ground.element').length;
-    console.log(`second run: ${memory} memory confirmations, ${full} full groundings, ${used.length} calls`);
-    expect(memory).toBeGreaterThanOrEqual(3);
+    console.log(`second run: ${full} full groundings, ${used.length} calls (first run ${firstRunCalls})`);
+    // Remembered elements of reversible steps are tried directly: fewer JEV calls than the first run.
+    expect(used.length).toBeLessThan(firstRunCalls);
+  }, 300_000);
+
+  const cars = (city: string, brand: string, model: string) => ({
+    goal: `Find the cheapest ${brand} ${model} for sale in ${city}`,
+    site: fixtures.url('filters.html'),
+    params: {
+      city: { value: city, about: 'city where the car is sold' },
+      brand: { value: brand, about: 'car brand (make)' },
+      model: { value: model, about: 'car model' },
+    },
+    result: { schema: { price: 'money', title: 'string', year: 'number', url: 'url' }, select: 'min(price)' },
+  });
+  const printSteps = async (taskId: string) => {
+    const trace = await client.call('task.trace', { task_id: taskId });
+    for (const s of trace.steps) console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''} [${s.calls.map((c: any) => c.template).join(', ')}]`);
+  };
+
+  it('sets filter chips and sorts by price on a filters page without questions', async () => {
+    const created = await client.call('task.create', cars('Павлодар', 'Toyota', 'Camry'));
+    const { result, questions } = await runToEnd(created.task_id, pickTop);
+    await printSteps(created.task_id);
+    console.log('RESULT', JSON.stringify({ selected: result.result?.selected, stats: result.stats }));
+    expect(result.status).toBe('done');
+    expect(result.result.selected.price.amount).toBe(700000);
+    expect(result.result.selected.title).toMatch(/Toyota Camry/);
+    expect(questions).toHaveLength(0);
+  }, 300_000);
+
+  it('picks values that are only in dropdown lists', async () => {
+    const created = await client.call('task.create', cars('Караганда', 'Lexus', 'RX 350'));
+    const { result, questions } = await runToEnd(created.task_id, pickTop);
+    await printSteps(created.task_id);
+    console.log('RESULT', JSON.stringify({ selected: result.result?.selected, stats: result.stats }));
+    expect(result.status).toBe('done');
+    expect(result.result.selected.title).toMatch(/Lexus RX 350/);
+    expect(questions).toHaveLength(0);
   }, 300_000);
 });
