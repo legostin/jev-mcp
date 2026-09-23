@@ -77,7 +77,11 @@ describe.skipIf(!cft || !existsSync(join(extDir, 'worker.js')))('Chrome extensio
   });
 
   it('pairs with a one-time code', async () => {
-    const status = await panel.eval(`new Promise(r => chrome.runtime.sendMessage({type:'getStatus'}, r))`);
+    // The daemon may see the connection a moment before the extension updates its own status.
+    const status = await until(async () => {
+      const st = await panel.eval(`new Promise(r => chrome.runtime.sendMessage({type:'getStatus'}, r))`);
+      return st?.status === 'connected' ? st : null;
+    });
     expect(status.status).toBe('connected');
   });
 

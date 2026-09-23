@@ -45,10 +45,13 @@ function segments(model: PageModel, refs: string[]): { segs: Segment[]; url: str
   return { segs, url };
 }
 
+// A shown address ("(https://site/blog/introducing-x)") repeats a title's words but is not the title.
+const urlish = (t: string) => /^\(?\s*(https?:\/\/|www\.)/i.test(t) || /^\(?[\w-]+(\.[\w-]+)+(\/\S*)?\)?$/.test(t);
+
 function dedupe(segs: Segment[]): Segment[] {
   const out: Segment[] = [];
   for (const s of segs) {
-    const same = out.findIndex((o) => overlap(o.text, s.text) >= 0.8);
+    const same = out.findIndex((o) => urlish(o.text) === urlish(s.text) && overlap(o.text, s.text) >= 0.8);
     if (same === -1) out.push(s);
     else if (s.text.length > out[same].text.length && words(s.text).length > words(out[same].text).length) out[same] = s;
   }

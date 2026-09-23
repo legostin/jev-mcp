@@ -146,7 +146,8 @@ function subtreeText(raw: RawCapture, info: NodeInfo[], idx: number, max = 300, 
     if (n.nodeType === 3) {
       // Keep the node's own spacing: "playwright_<em>mcp</em>" is one word, not "playwright_ mcp".
       const t = n.text;
-      if (t && t.trim() && info[i].visible && !info[i].ariaHidden) { parts.push(t); len += t.length; }
+      if (t && !t.trim()) { parts.push(' '); return; }
+      if (t && info[i].visible && !info[i].ariaHidden) { parts.push(t); len += t.length; }
       return;
     }
     // Block boxes separate words; inline ones (highlights, links inside text) do not.
@@ -161,6 +162,28 @@ function subtreeText(raw: RawCapture, info: NodeInfo[], idx: number, max = 300, 
   };
   walk(idx);
   return cleanText(parts.join(''), max);
+}
+
+// Inline formatting inside running text: highlighted query words, bold prices, small units.
+const INLINE_TEXT_TAGS = new Set(['em', 'strong', 'b', 'i', 'u', 'mark', 'small', 'sub', 'sup', 'code', 'abbr', 'time', 'span', 'bdi', 'q', 's', 'del', 'ins', 'kbd', 'var', 'dfn', 'cite', 'font']);
+const CONTROL_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea', 'label', 'img', 'svg', 'video', 'iframe']);
+
+/** Non-interactive inline children that belong to the parent's text ("Model Context Protocol (<em>MCP</em>) server"). */
+function inlineTextChildren(raw: RawCapture, idx: number): number[] {
+  const out: number[] = [];
+  const plain = (i: number): boolean => {
+    const c = raw.nodes[i];
+    if (c.nodeType === 3) return true;
+    if (c.nodeType !== 1 || CONTROL_TAGS.has(c.tag) || !INLINE_TEXT_TAGS.has(c.tag)) return false;
+    if (c.style && !c.style.display.startsWith('inline')) return false;
+    if (c.attrs.onclick !== undefined || c.attrs.role || c.attrs.tabindex !== undefined) return false;
+    return c.children.every(plain);
+  };
+  // Only a pure run of text qualifies: every child is text or inline formatting (no fields, buttons or blocks).
+  const kids = raw.nodes[idx].children.filter((c) => raw.nodes[c].nodeType === 1 || raw.nodes[c].nodeType === 3);
+  if (!kids.every(plain)) return [];
+  for (const c of kids) if (raw.nodes[c].nodeType === 1) out.push(c);
+  return out;
 }
 
 function ownText(raw: RawCapture, idx: number): string {
@@ -373,6 +396,8 @@ export function extractElements(raw: RawCapture): { drafts: ElementDraft[]; info
 
   // 2. Text candidates for names and meaningful text elements.
   const insideInteractive = new Uint8Array(nodes.length);
+  /** Inline pieces already folded into their parent's text. */
+  const mergedText = new Set<number>();
   for (const i of [...order].reverse()) { // parents before children
     const n = nodes[i];
     if (n.parent >= 0 && (insideInteractive[n.parent] || strong[n.parent] || weak[n.parent])) insideInteractive[i] = 1;
@@ -412,8 +437,19 @@ export function extractElements(raw: RawCapture): { drafts: ElementDraft[]; info
       continue;
     }
     if (insideInteractive[n.idx]) continue;
+    if (mergedText.has(n.idx)) continue;
     if (!isRendered(n, inf)) continue;
-    const own = ownText(raw, n.idx);
+    let own = ownText(raw, n.idx);
+    const inlineKids = inlineTextChildren(raw, n.idx);
+    if (inlineKids.length) {
+      // The parent's text includes its inline formatting; the pieces do not become elements of their own.
+      const full = subtreeText(raw, info, n.idx, 200);
+      if (full) {
+        own = full;
+        const stack = [...inlineKids];
+        while (stack.length) { const i = stack.pop()!; mergedText.add(i); stack.push(...raw.nodes[i].children); }
+      }
+    }
     const isHeading = HEADING_TAGS.has(n.tag) || explicitRole(n) === 'heading' || n.ax?.role === 'heading';
     if (isHeading) {
       const text = subtreeText(raw, info, n.idx, 120);

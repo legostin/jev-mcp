@@ -829,13 +829,14 @@ export class Task extends Emitter<TaskEvents> {
     // After a search, filters that moved the page to a new address were applied by the site: no second submit.
     if (this.dirty && this.submitsDone > 0 && this.lastSubmitUrl && model.url !== this.lastSubmitUrl) this.dirty = false;
     if (this.spec.result && this.dirty && hasForm && !pendingKeys.length) return { type: 'submit' };
-    if (this.spec.result && !(pendingKeys.length && hasForm) && (a.pageKind === 'results_list' || (yes(a.resultsMatch) && model.regions.some((r) => r.kind === 'list')))) {
+    // Params first while one of them can still be looked for here (filters are often dropdown buttons outside any form).
+    if (this.spec.result && !pendingKeys.length && (a.pageKind === 'results_list' || (yes(a.resultsMatch) && model.regions.some((r) => r.kind === 'list')))) {
       // For min/max, let the site sort first: then the first page holds the answer instead of every page.
       if (!this.sortTried && /^(min|max)\(/.test(this.spec.result.select ?? '')) return { type: 'apply_sort' };
       return { type: 'extract' };
     }
     if (!this.spec.result && yes(a.goalReached) && Object.values(this.status).every((s) => s !== 'pending')) return { type: 'done', reason: 'goal reached' };
-    const onForm = ['search_form', 'login', 'other', 'item_details', 'checkout'].includes(a.pageKind) || (hasForm && pendingKeys.length > 0);
+    const onForm = ['search_form', 'login', 'other', 'item_details', 'checkout'].includes(a.pageKind) || pendingKeys.length > 0;
     if (onForm) {
       for (const k of Object.keys(this.params)) {
         const s = this.status[k];
@@ -1421,6 +1422,8 @@ export class Task extends Emitter<TaskEvents> {
           this.th(), { goal: this.spec.goal, step: this.card(sub), budgetTokens: this.budget() });
         if (res.decision !== 'act' || !res.ref) {
           if (g.trial && res.decision === 'none') return failTrial('its menu has no such order');
+          await page.press('Escape');
+          await this.settle();
           return { outcome: 'skipped', note: 'sort menu opened but no matching order' };
         }
         const opt = opened.elements.get(res.ref)!;
