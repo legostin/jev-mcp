@@ -769,6 +769,11 @@ export class Task extends Emitter<TaskEvents> {
   private async chooseSubintent(model: Model, a: AssessOutput): Promise<Subintent> {
     const th = this.th();
     const yes = (v: number, kind: DecisionKind = 'assess') => gateNoul(v, th[kind].noul) === 'yes';
+    // Results reached without our submit (an autocomplete pick or a filter link started the search) count as one.
+    if (a.pageKind === 'results_list' && this.submitsDone === 0) {
+      this.submitsDone = 1;
+      this.lastSubmitUrl = model.url;
+    }
     // A server error is often transient: reload once, then go back. "Nothing found" is a question for the agent.
     if (a.pageKind === 'error' && a.pageKindConfidence >= th.assess.choice.escalate) {
       return this.reloaded.has(model.url) ? { type: 'go_back' } : { type: 'reload' };
