@@ -37,6 +37,11 @@ export function parseNumber(text: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+export function detectCurrency(text: string): string | null {
+  for (const [re, code] of CURRENCY) if (re.test(text)) return code;
+  return null;
+}
+
 export function parseMoney(text: string): Money | null {
   const amount = parseNumber(text);
   if (amount === null) return null;

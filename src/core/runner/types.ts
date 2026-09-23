@@ -69,6 +69,7 @@ export const answerSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('continue') }),
   z.object({ type: z.literal('thresholds'), value: confidenceSchema }),
   z.object({ type: z.literal('skip') }),
+  z.object({ type: z.literal('none') }),
   z.object({ type: z.literal('abort'), reason: z.string().optional() }),
 ]);
 export type AnswerInput = z.infer<typeof answerSchema> & { remember?: boolean };

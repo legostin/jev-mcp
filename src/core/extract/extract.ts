@@ -5,7 +5,7 @@ import { describeElement } from '../perception/render.ts';
 import { buildState } from '../questions/state.ts';
 import { runQuestions, choiceOf, noulOf, type QuestionContext } from '../questions/run.ts';
 import { gateChoice } from '../decide/gating.ts';
-import { numericValue, parseField, type FieldType } from './parse.ts';
+import { detectCurrency, numericValue, parseField, type Money, type FieldType } from './parse.ts';
 
 export type FieldSpec = FieldType | { type: FieldType; about?: string };
 export interface ResultSpec { schema: Record<string, FieldSpec>; select?: string }
@@ -73,7 +73,7 @@ async function pickList(ctx: QuestionContext, model: PageModel, goal: string, bu
   return best;
 }
 
-function applySelect(items: Record<string, unknown>[], select: string | undefined): number | undefined {
+export function applySelect(items: Record<string, unknown>[], select: string | undefined): number | undefined {
   if (!items.length) return undefined;
   if (!select || select === 'all') return undefined;
   if (select === 'first') return 0;
@@ -168,6 +168,11 @@ export async function extractResults(
           const v = parseField(type, l.el.text || l.el.name, base, opts.refDate);
           if (v !== null && v !== undefined) { value = v; break; }
         }
+      }
+      // A currency sign often sits in its own element next to the amount ("111 888" + "₸").
+      if (type === 'money' && value && (value as Money).currency === null) {
+        const itemText = leaves.map((l) => l.el.text || l.el.name).join(' ');
+        (value as Money).currency = detectCurrency(itemText);
       }
       row[f] = value;
     }

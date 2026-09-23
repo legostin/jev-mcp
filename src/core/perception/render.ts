@@ -19,6 +19,7 @@ function shortHref(href: string, pageUrl: string): string {
 export function describeElement(el: ElementNode, opts: { region?: boolean; pageUrl?: string; context?: boolean } = {}): string {
   const parts: string[] = [el.kind];
   if (el.name) parts.push(q(el.name));
+  if (el.label) parts.push(`label=${q(el.label, 40)}`);
   if (el.kind === 'textbox' || el.kind === 'combobox' || el.kind === 'select' || el.kind === 'slider') {
     parts.push(`value=${q(el.value ?? '', 60)}`);
   }
@@ -42,6 +43,7 @@ export function describeElement(el: ElementNode, opts: { region?: boolean; pageU
   else if (!el.inViewport) flags.push('offscreen');
   if (el.occluded) flags.push('covered');
   if (flags.length) parts.push(`[${flags.join(',')}]`);
+  if (el.hints?.length) parts.push(`<${el.hints.join(',')}>`);
   if (opts.context !== false && el.context) parts.push(`(section ${q(el.context, 40)})`);
   if (opts.region) parts.push(`{${el.regionId}}`);
   return parts.join(' ');

@@ -17,12 +17,12 @@ import { buildVerify, readVerify } from '../questions/templates/verify.ts';
 import { runQuestions, choiceOf, noulOf, type QuestionContext } from '../questions/run.ts';
 import { buildState } from '../questions/state.ts';
 import { gateChoice, gateNoul, topCandidates } from '../decide/gating.ts';
-import { extractResults, type ExtractOutput } from '../extract/extract.ts';
+import { extractResults, applySelect, type ExtractOutput } from '../extract/extract.ts';
 import { inRange } from '../extract/dates.ts';
 import { deterministicRisk, domainAllowed } from '../safety/rules.ts';
 import { maskSecrets, secretValues } from '../safety/secrets.ts';
 import { thresholdsFor, hostOf } from './thresholds.ts';
-import { dateRange, fieldHoldsValue, paramKind, requiredEmptyFields } from './progress.ts';
+import { dateRange, fieldHoldsValue, normalizeText, paramKind, requiredEmptyFields } from './progress.ts';
 import { Emitter } from '../util/events.ts';
 import { newId } from '../util/ids.ts';
 import { logger } from '../util/log.ts';
@@ -73,6 +73,8 @@ type Subintent =
   | { type: 'pick_suggestion'; key: string }
   | { type: 'pick_date'; key: string }
   | { type: 'submit' }
+  | { type: 'reveal'; key: string }
+  | { type: 'apply_sort' }
   | { type: 'extract' }
   | { type: 'load_more' }
   | { type: 'close_popup' }
@@ -143,6 +145,12 @@ export class Task extends Emitter<TaskEvents> {
   private assessCache: { sig: string; out: AssessOutput } | null = null;
   private dismissed = new Set<string>();
   private submitsDone = 0;
+  private revealTried = new Set<string>();
+  /** Params changed since the last submit: filters on list pages apply only after "Show N results". */
+  private dirty = false;
+  private sortTried = false;
+  private sortedBy: string | null = null;
+  private collected = new Map<string, { item: Record<string, unknown>; snippets: string[]; url: string }>();
 
   constructor(spec: TaskSpec, deps: TaskDeps, id = newId('t')) {
     super();
@@ -451,8 +459,13 @@ export class Task extends Emitter<TaskEvents> {
     const th = this.th().ground.choice;
     const answer = await this.escalate('ground', `Unsure which element is ${intent.target}.`, {
       decision: { template: 'ground.element', asked: `Which element is ${intent.target}?`, candidates: res.candidates, confidence: res.confidence, thresholds: { act: th.act, escalate: th.escalate } },
-      answer_with: ['pick', 'hint', 'skip', 'thresholds', 'set_param', 'abort'],
+      answer_with: ['pick', 'none', 'hint', 'skip', 'thresholds', 'set_param', 'abort'],
     });
+    if (answer.type === 'none') {
+      // The agent says the target is not on this page: behave as if JEV had said so.
+      for (const id of res.callIds) this.deps.trace.labelCall(id, false, 'agent: not on page');
+      return { el: null, res: { ...res, ref: null, decision: 'none' }, answer };
+    }
     if (answer.type === 'pick') {
       const fresh = await this.observe(false);
       const el = fresh.elements.get(answer.ref) ?? null;
@@ -610,6 +623,16 @@ export class Task extends Emitter<TaskEvents> {
       && ['option', 'menuitem', 'link', 'button', 'clickable'].includes(e.kind));
   }
 
+  /** Options that appeared after clicking a trigger: a popup near it, or new controls from the diff. */
+  private revealedOptions(before: Model, after: Model, trigger?: ElementNode): ElementNode[] {
+    const near = this.popupOptions(after, trigger);
+    if (near.length) return near;
+    const diff = diffModels(before, after);
+    const kinds = new Set(['option', 'menuitem', 'checkbox', 'radio', 'button', 'clickable', 'link']);
+    return diff.added.map((r) => after.elements.get(r)).filter((e): e is ElementNode => !!e && e.visible && e.interactive && kinds.has(e.kind)
+      && (!trigger || Math.abs(e.rect.y - trigger.rect.y) < 700));
+  }
+
   private fieldOf(model: Model, key: string): ElementNode | undefined {
     const ref = this.paramRefs[key];
     return ref ? model.elements.get(ref) : undefined;
@@ -645,9 +668,14 @@ export class Task extends Emitter<TaskEvents> {
     const pendingDate = Object.keys(this.params).find((k) => paramKind(this.params[k]) === 'date' && this.status[k] === 'pending');
     if (pendingDate && this.popupCalendar(model).length >= 7) return { type: 'pick_date', key: pendingDate };
     // Params come first while the page still has a form for them (sites often preview results before the search).
-    const pendingKeys = Object.keys(this.params).filter((k) => (this.status[k] === 'pending' || this.status[k] === 'typed') && this.absentOn[k] !== model.signature);
+    // A param counts as pending while it can still be filled here, or revealed behind "more filters".
+    const pendingKeys = Object.keys(this.params).filter((k) => (this.status[k] === 'pending' || this.status[k] === 'typed')
+      && (this.absentOn[k] !== model.signature || !this.revealTried.has(k)));
     const hasForm = model.regions.some((r) => r.kind === 'form');
+    if (this.spec.result && this.dirty && hasForm && !pendingKeys.length) return { type: 'submit' };
     if (this.spec.result && !(pendingKeys.length && hasForm) && (a.pageKind === 'results_list' || (yes(a.resultsMatch) && model.regions.some((r) => r.kind === 'list')))) {
+      // For min/max, let the site sort first: then the first page holds the answer instead of every page.
+      if (!this.sortTried && /^(min|max)\(/.test(this.spec.result.select ?? '')) return { type: 'apply_sort' };
       return { type: 'extract' };
     }
     if (!this.spec.result && yes(a.goalReached) && Object.values(this.status).every((s) => s !== 'pending')) return { type: 'done', reason: 'goal reached' };
@@ -662,6 +690,12 @@ export class Task extends Emitter<TaskEvents> {
           if (reflected !== undefined && yes(reflected)) { this.status[k] = 'done'; continue; }
         }
         return paramKind(this.params[k]) === 'date' ? { type: 'pick_date', key: k } : { type: 'fill_param', key: k };
+      }
+      // A param with no field on this page may sit behind "advanced search" / "more filters": try to reveal it once.
+      for (const k of Object.keys(this.params)) {
+        if ((this.status[k] === 'pending' || this.status[k] === 'typed') && this.absentOn[k] === model.signature && !this.revealTried.has(k)) {
+          return { type: 'reveal', key: k };
+        }
       }
       const missing = Object.entries(a.requiredUncovered).filter(([, p]) => yes(p));
       if (missing.length) {
@@ -742,6 +776,8 @@ export class Task extends Emitter<TaskEvents> {
       case 'pick_suggestion': return this.pickSuggestion(sub.key, model);
       case 'pick_date': return this.pickDate(sub, model);
       case 'submit': return this.submit(sub, model, a);
+      case 'reveal': return this.reveal(sub, model);
+      case 'apply_sort': return this.applySort(sub, model);
       case 'extract': return this.extract(model);
       case 'load_more': return { outcome: 'retry', note: 'load more handled by extract' };
       case 'close_popup': {
@@ -818,8 +854,11 @@ export class Task extends Emitter<TaskEvents> {
     const p = this.params[k];
     const about = p.about ?? k.replace(/_/g, ' ');
     const kind = paramKind(p);
-    const kinds: Intent['kinds'] = kind === 'boolean' ? ['checkbox', 'radio'] : ['textbox', 'combobox', 'select'];
-    const g = await this.ground(sub, { target: kind === 'boolean' ? `the checkbox or switch for "${about}"` : `the input field for the ${about}`, action: kind === 'boolean' ? 'check' : 'type', kinds }, `param:${k}`);
+    const kinds: Intent['kinds'] = kind === 'boolean' ? ['checkbox', 'radio'] : ['textbox', 'combobox', 'select', 'clickable', 'button'];
+    const g = await this.ground(sub, {
+      target: kind === 'boolean' ? `the checkbox or switch for "${about}"` : `the input field, or the dropdown/selector, for the ${about}`,
+      action: kind === 'boolean' ? 'check' : 'type', kinds,
+    }, `param:${k}`);
     if (!g.el) {
       if (g.answer?.type === 'skip') { this.status[k] = 'skipped'; return { outcome: 'skipped', note: `skipped param ${k}` }; }
       if (g.res?.decision === 'none') { this.absentOn[k] = model.signature; return { outcome: 'skipped', note: `no field for ${k} on this page` }; }
@@ -832,6 +871,7 @@ export class Task extends Emitter<TaskEvents> {
       const want = p.value === true;
       if ((el.states.checked === true) !== want) await this.click(el);
       this.status[k] = 'done';
+      this.dirty = true;
       await this.settle();
       this.settleGrounding(true);
       return { outcome: 'ok', note: `${want ? 'checked' : 'unchecked'} ${el.ref} "${el.name}" for ${k}`, action: { type: 'check', ref: el.ref, value: want } };
@@ -852,10 +892,12 @@ export class Task extends Emitter<TaskEvents> {
         await page.selectOption(el.backendNodeId, opts[Number(pick.choice.slice(1))].value, el.frameSessionId);
       }
       this.status[k] = 'done';
+      this.dirty = true;
       await this.settle();
       this.settleGrounding(true);
       return { outcome: 'ok', note: `selected ${k} in ${el.ref} "${el.name}"`, action: { type: 'select', ref: el.ref } };
     }
+    if (el.kind === 'clickable' || el.kind === 'button') return this.pickFromDropdown(k, el, model);
     if (fieldHoldsValue(el, p)) {
       this.status[k] = 'done';
       return { outcome: 'ok', note: `${k} already filled in ${el.ref}` };
@@ -877,8 +919,50 @@ export class Task extends Emitter<TaskEvents> {
     }
     // No suggestions appeared after the page settled: the value is in. (Late suggestions or validation errors
     // bring the param back: see the pick_suggestion rule and submit's validation handling.)
-    if (typedOk) this.status[k] = 'done';
+    if (typedOk) { this.status[k] = 'done'; this.dirty = true; }
     return { outcome: typedOk ? 'ok' : 'failed', note, action: { type: 'type', ref: el.ref, param: k } };
+  }
+
+  /** Custom dropdowns (div-based selects, multi-select checkboxes): open, pick the option matching the value, close. */
+  private async pickFromDropdown(k: string, trigger: ElementNode, model: Model): Promise<Outcome> {
+    const p = this.params[k];
+    if (normalizeText(trigger.text ?? trigger.name).includes(normalizeText(String(p.value)))) {
+      this.status[k] = 'done';
+      return { outcome: 'ok', note: `${k} already set in ${trigger.ref} "${trigger.name}"` };
+    }
+    await this.click(trigger);
+    await this.settle();
+    const opened = await this.observe(false);
+    const options = this.revealedOptions(model, opened, opened.elements.get(trigger.ref) ?? trigger).slice(0, 60);
+    if (!options.length) return { outcome: 'failed', note: `clicked ${trigger.ref} "${trigger.name}" but no options appeared` };
+    const res = await runQuestions(this.qctx(), buildSuggestionPick(opened, options.map((o) => o.ref), this.params, k, this.budget()));
+    const pick = choiceOf(res.answers, 'pick');
+    let ref = pick.choice;
+    if (ref === 'none' || gateChoice(pick, this.th().ground.choice) !== 'act') {
+      const ans = await this.escalate('ground', `Unsure which option of "${trigger.name}" matches ${k} = "${String(p.value)}".`, {
+        decision: { template: 'widget.suggestion_pick', asked: `Which option matches params.${k}?`, confidence: pick.confidence,
+          candidates: topCandidates(pick, 5, ['none']).map((c) => ({ ref: c.key, p: c.p, desc: describeElement(opened.elements.get(c.key)!) })) },
+        answer_with: ['pick', 'none', 'set_param', 'skip', 'abort'],
+      });
+      if (ans.type !== 'pick') { await (await this.page()).press('Escape'); return { outcome: ans.type === 'skip' ? 'skipped' : 'retry', note: `no option chosen for ${k}` }; }
+      ref = ans.ref;
+    }
+    const opt = opened.elements.get(ref);
+    if (!opt) return { outcome: 'failed', note: `option ${ref} vanished` };
+    await this.click(opt);
+    await this.settle();
+    // Multi-select dropdowns stay open: close them so they do not cover the form.
+    const after = await this.observe(false);
+    if (after.elements.get(ref)?.visible && after.elements.get(ref)?.inViewport) {
+      await (await this.page()).press('Escape');
+      await this.settle();
+    }
+    this.status[k] = 'done';
+    this.dirty = true;
+    this.lastTypedKey = null;
+    this.deps.trace.labelCall(res.callId, true, 'dropdown pick');
+    this.settleGrounding(true);
+    return { outcome: 'ok', note: `opened ${trigger.ref} "${trigger.name}" and picked ${ref} "${opt.name}" for ${k}`, action: { type: 'click', ref, param: k } };
   }
 
   private async pickSuggestion(k: string, model: Model): Promise<Outcome> {
@@ -911,6 +995,7 @@ export class Task extends Emitter<TaskEvents> {
     const stillOpen = this.popupOptions(after, this.fieldOf(after, k)).some((o) => o.ref === ref);
     this.deps.trace.labelCall(res.callId, !stillOpen, 'suggestion click');
     this.status[k] = stillOpen ? 'typed' : 'done';
+    if (!stillOpen) this.dirty = true;
     this.lastTypedKey = null;
     return { outcome: stillOpen ? 'failed' : 'ok', note: `picked suggestion ${ref} "${el.name}" for ${k}`, action: { type: 'click', ref, param: k } };
   }
@@ -966,6 +1051,7 @@ export class Task extends Emitter<TaskEvents> {
         await this.click(el);
         await this.settle();
         this.status[k] = 'done';
+        this.dirty = true;
         return { outcome: 'ok', note: `picked ${chosen.date} for ${k}: ${why}`, action: { type: 'click', ref: chosen.ref, date: chosen.date } };
       }
       const dates = cells.map((c) => c.date).sort();
@@ -1024,6 +1110,66 @@ export class Task extends Emitter<TaskEvents> {
     return parseCalendarCells(model, this.refDate()).filter((c) => this.layerRegion(model, c.regionId) !== undefined);
   }
 
+  /** Opens "advanced search" / "more filters" (or a tab) that may hold the field for a param. */
+  private async reveal(sub: Extract<Subintent, { type: 'reveal' }>, model: Model): Promise<Outcome> {
+    const k = sub.key;
+    this.revealTried.add(k);
+    const about = this.params[k].about ?? k.replace(/_/g, ' ');
+    const g = await this.ground(sub, {
+      target: `the button, link or tab that shows more search filters (such as advanced search or "more filters") where a field for the ${about} may be`,
+      kinds: ['button', 'link', 'clickable', 'tab'], action: 'click',
+    }, `reveal:${k}`);
+    if (!g.el) return { outcome: 'skipped', note: `no control reveals a field for ${k}; continuing without it` };
+    await this.click(g.el);
+    await this.settle();
+    delete this.absentOn[k];
+    this.settleGrounding(true);
+    return { outcome: 'ok', note: `opened ${g.el.ref} "${g.el.name}" to look for the ${about} field`, action: { type: 'click', ref: g.el.ref } };
+  }
+
+  /** Uses the site's own sorting so the extreme value is on the first page. */
+  private async applySort(sub: Extract<Subintent, { type: 'apply_sort' }>, model: Model): Promise<Outcome> {
+    this.sortTried = true;
+    const select = this.spec.result!.select!;
+    const m = select.match(/^(min|max)\((\w+)\)$/)!;
+    const fieldSpec = this.spec.result!.schema[m[2]];
+    const about = (typeof fieldSpec === 'object' && fieldSpec.about) || m[2].replace(/_/g, ' ');
+    const order = m[1] === 'min' ? `by ${about}, lowest first (ascending, cheapest first)` : `by ${about}, highest first (descending)`;
+    const g = await this.ground(sub, {
+      target: `the control that sorts the result list ${order}, or the sort menu that offers this order`,
+      kinds: ['select', 'combobox', 'button', 'link', 'tab', 'clickable', 'option', 'radio'], action: 'click',
+    }, `sort:${select}`);
+    if (!g.el) return { outcome: 'skipped', note: 'no sort control found; reading results as listed' };
+    const page = await this.page();
+    const before = model.url;
+    if (g.el.kind === 'select') {
+      const opts = g.el.options ?? [];
+      const res = await runQuestions(this.qctx(), buildOptionPick(opts, { sort: { value: `sort ${order}`, about: 'sort order' } }, 'sort', this.budget()));
+      const pick = choiceOf(res.answers, 'pick');
+      if (pick.choice === 'none' || gateChoice(pick, this.th().ground.choice) === 'escalate') return { outcome: 'skipped', note: 'no matching sort option' };
+      await page.selectOption(g.el.backendNodeId, opts[Number(pick.choice.slice(1))].value, g.el.frameSessionId);
+    } else {
+      await this.click(g.el);
+      await this.settle();
+      const opened = await this.observe(false);
+      const options = this.revealedOptions(model, opened, opened.elements.get(g.el.ref) ?? g.el);
+      if (options.length) {
+        const restricted = new Set(options.map((o) => o.ref));
+        const view = { ...opened, elements: new Map([...opened.elements].filter(([r]) => restricted.has(r))) } as Model;
+        const res = await groundByIntent(this.qctx(), view, { target: `the option that sorts ${order}`, kinds: ['option', 'menuitem', 'link', 'button', 'clickable', 'radio'], action: 'click' },
+          this.th(), { goal: this.spec.goal, budgetTokens: this.budget() });
+        if (res.decision !== 'act' || !res.ref) return { outcome: 'skipped', note: 'sort menu opened but no matching order' };
+        const opt = opened.elements.get(res.ref)!;
+        await this.click(opt);
+      }
+    }
+    await this.settle();
+    const after = await this.observe(false);
+    this.sortedBy = select;
+    this.settleGrounding(true);
+    return { outcome: 'ok', note: `sorted results ${order} via ${g.el.ref} "${g.el.name}"${after.url !== before ? ` (${after.url})` : ''}`, action: { type: 'sort', ref: g.el.ref } };
+  }
+
   /** The popup/overlay/dialog layer that contains a region (calendar grids are lists inside a popup). */
   private layerRegion(model: Model, regionId: string): string | undefined {
     let r = model.regions.find((x) => x.id === regionId);
@@ -1054,6 +1200,7 @@ export class Task extends Emitter<TaskEvents> {
     if (await this.guard(g.el, 'submit the form', true) === 'skip') return { outcome: 'skipped', note: 'submit not approved' };
     const beforeUrl = model.url;
     this.submitsDone++;
+    this.dirty = false;
     const clickedAt = this.now();
     await this.click(g.el);
     await this.settle();
@@ -1098,26 +1245,37 @@ export class Task extends Emitter<TaskEvents> {
       const ans = await this.escalate('assess', 'Expected a list of results but could not find one on this page.', { answer_with: ['hint', 'continue', 'abort'] });
       return { outcome: 'retry', note: `no result list found (${ans.type})` };
     }
+    // Accumulate across "show more" and page-by-page pagination (items are keyed by link or content).
+    out.items.forEach((item, i) => {
+      const key = String(item.url ?? '') || JSON.stringify(item);
+      const snippets = out.itemRefs[i].map((r) => model.elements.get(r)).filter(Boolean).map((e) => e!.text || e!.name).filter(Boolean).slice(0, 8);
+      if (!this.collected.has(key)) this.collected.set(key, { item, snippets, url: model.url });
+    });
     const maxItems = this.spec.policy.max_items ?? 200;
-    const needsAll = !spec.select || spec.select === 'all' || /^(min|max)\(/.test(spec.select);
-    const grew = out.items.length > this.extractPrev;
-    this.extractPrev = out.items.length;
-    if (needsAll && out.items.length < maxItems && grew && this.loadMoreCount < 30) {
+    const sorted = !!spec.select && this.sortedBy === spec.select;
+    const needsAll = !spec.select || spec.select === 'all' || (/^(min|max)\(/.test(spec.select) && !sorted);
+    const grew = this.collected.size > this.extractPrev;
+    this.extractPrev = this.collected.size;
+    if (needsAll && this.collected.size < maxItems && grew && this.loadMoreCount < 30) {
       const g = await this.groundLoadMore(model, out.listRegionId);
       if (g) {
         await this.click(g);
         await this.settle();
         this.loadMoreCount++;
-        return { outcome: 'ok', note: `read ${out.items.length} results; loading more via ${g.ref} "${g.name}"`, action: { type: 'click', ref: g.ref, purpose: 'load_more' } };
+        return { outcome: 'ok', note: `read ${this.collected.size} results; loading more via ${g.ref} "${g.name}"`, action: { type: 'click', ref: g.ref, purpose: 'load_more' } };
       }
     }
+    const all = [...this.collected.values()];
+    const items = all.map((c) => c.item);
+    const idx = applySelect(items, spec.select);
+    const chosen = idx !== undefined ? all[idx] : undefined;
     this.finish('done', {
-      result: { selected: out.selected, items_count: out.items.length },
-      items: out.items,
-      evidence: { url: model.url, refs: out.evidence.refs, snippets: out.evidence.snippets },
-      warnings: out.warnings,
+      result: { selected: chosen?.item, items_count: items.length },
+      items,
+      evidence: { url: chosen?.url ?? model.url, refs: idx !== undefined && out.itemRefs[idx] && chosen?.url === model.url ? out.itemRefs[idx] : [], snippets: chosen?.snippets ?? [] },
+      warnings: [...out.warnings, ...(sorted ? [`Results were sorted on the site (${spec.select}); the answer comes from the first page.`] : [])],
     });
-    return { outcome: 'finished', note: `extracted ${out.items.length} results${out.selected ? '; selected one' : ''}` };
+    return { outcome: 'finished', note: `extracted ${items.length} results${chosen ? '; selected one' : ''}${sorted ? ' (site-sorted)' : ''}` };
   }
 
   private async groundLoadMore(model: Model, listRegionId: string): Promise<ElementNode | null> {

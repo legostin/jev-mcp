@@ -105,7 +105,7 @@ export function buildPageModel(raw: RawCapture, prev?: PageModel & Partial<Model
       value: d.value, placeholder: d.placeholder, inputType: d.inputType, href: d.href, text: d.text, options: d.options,
       states: d.states, interactive: d.interactive, visible: d.visible, inViewport: d.inViewport, occluded: d.occluded,
       occludedBy: d.occludedBy, rect: d.rect, regionId: region.id, backendNodeId: d.backendNodeId,
-      frameSessionId: d.frameSessionId, attrs: d.attrs, context: d.context, order: d.order,
+      frameSessionId: d.frameSessionId, attrs: d.attrs, context: d.context, label: d.label, hints: d.hints, order: d.order,
     };
     elements.set(el.ref, el);
     refByIdx.set(d.idx, el.ref);

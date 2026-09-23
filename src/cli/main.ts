@@ -14,6 +14,7 @@ Usage:
   jev open <url> [--driver d]      Open a tab and print the page overview
   jev observe [view] [target]      Print a page view (overview|region|element|diff|full)
   jev find <query>                 Rank elements matching a description
+  jev call <method> [json]         Raw daemon call (task.create, task.answer, page.observe, …)
   jev watch <task> [--until question|done|any] [--timeout s]
                                    Wait for a task event, print it as JSON, exit (for background use)
   jev pair                         Show a pairing code for the Chrome extension
@@ -96,6 +97,14 @@ export async function main(argv: string[]): Promise<void> {
         const r = await daemonCall('page.find', { query: args.filter((a) => !a.startsWith('--')).join(' '), tab: flag(args, 'tab') });
         console.log(`best ${r.best} confidence ${r.confidence.toFixed(2)} exists ${r.exists.toFixed(2)} (${r.decision})`);
         for (const m of r.matches) console.log(`  ${m.ref} p=${m.p.toFixed(2)} ${m.desc}`);
+        return;
+      }
+      case 'call': {
+        // Raw daemon RPC for agents without MCP and for debugging: jev call <method> [json-params]
+        if (!args[0]) throw new Error('usage: jev call <method> [json-params]');
+        const params = args[1] ? JSON.parse(args[1] === '-' ? await readStdin() : args[1]) : {};
+        const r = await daemonCall(args[0], params, Number(flag(args, 'timeout') ?? 120) * 1000);
+        console.log(JSON.stringify(r, null, 2));
         return;
       }
       case 'watch': {

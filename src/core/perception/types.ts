@@ -41,6 +41,10 @@ export interface ElementNode {
   attrs: Record<string, string>;
   /** Nearest section heading or legend, for disambiguation. */
   context?: string;
+  /** Visible text right before the control ("Сортировать по:", "Цена"), when it differs from the name. */
+  label?: string;
+  /** UI words found in class/id ("sort", "filter", "next"): cheap semantic signals for JEV. */
+  hints?: string[];
   /** Document order across frames. */
   order: number;
 }

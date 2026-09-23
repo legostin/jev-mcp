@@ -23,6 +23,7 @@ export function QuestionCard({ q, onDone }: { q: any; onDone: () => void }) {
         <button disabled={!hint} onClick={() => send({ type: 'hint', text: hint })}>Send hint</button>
       </div>
       <div class="row" style={{ marginTop: '6px' }}>
+        {q.answer_with?.includes('none') && <button onClick={() => send({ type: 'none' })}>Not on page</button>}
         {q.answer_with?.includes('continue') && <button onClick={() => send({ type: 'continue' })}>Continue</button>}
         {q.answer_with?.includes('skip') && <button onClick={() => send({ type: 'skip' })}>Skip</button>}
         <button class="danger" onClick={() => send({ type: 'abort', reason: 'aborted from the debug UI' })}>Abort</button>

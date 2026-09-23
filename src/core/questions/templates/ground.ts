@@ -61,6 +61,8 @@ export function candidateElements(model: PageModel, intent: Intent): ElementNode
   for (const e of model.elements.values()) {
     if (!kinds.has(e.kind)) continue;
     if (!e.visible) continue;
+    // Visually hidden helpers (1-5 px native selects behind custom widgets) are never the target.
+    if ((e.rect.w < 6 || e.rect.h < 6) && e.kind !== 'checkbox' && e.kind !== 'radio') continue;
     if (e.states.disabled && intent.action !== 'read') continue;
     if (regionIds && !regionIds.has(e.regionId)) continue;
     if (intent.allowOccluded === false && e.occluded) continue;

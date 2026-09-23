@@ -172,6 +172,13 @@ export function registerPageApi(rpc: RpcServer, ctx: DaemonContext): void {
     return { tab: t.id, mimeType: 'image/png', data: png.toString('base64') };
   });
 
+  // Debugging aid for local developers (owner-only socket; not exposed as an MCP tool).
+  rpc.register('page.evaluate', async (p: { tab?: string; expression: string }, conn) => {
+    const t = await tabFor(conn, p.tab);
+    const page = await ctx.browsers.page(t.id);
+    return { value: await page.evaluate(p.expression) };
+  });
+
   rpc.register('settings.get', async (p: { path?: string }) => {
     const red = redactConfig(ctx.getConfig());
     return { path: p.path ?? '', value: p.path ? getPath(red, p.path) ?? null : red };

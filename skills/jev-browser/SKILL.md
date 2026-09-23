@@ -67,7 +67,7 @@ Answer with `jev_answer`. Look first (`jev_observe`, `jev_screenshot`) when the 
 
 | Question kind | Typical answer |
 |---|---|
-| `ground` (which element?) | `pick` a candidate ref, with `remember: true` if it will recur on this site. If none fits, give a `hint` or `set_param`. |
+| `ground` (which element?) | `pick` a candidate ref, with `remember: true` if it will recur on this site. If the target is not on the page (for example it sits behind "advanced search"), answer `none` and add a `hint` with `scope: "domain"` in a later answer if the site needs one. |
 | `subintent` (what next?) | `pick` a step id, or give a `hint` |
 | `missing_param` | `set_param` with key, value and about. Ask the user first if you do not know the value. |
 | `risk_confirm` (pay, order, send, delete…) | `continue` only if the user explicitly asked for this action; otherwise `skip` or `abort` |

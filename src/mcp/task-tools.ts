@@ -39,7 +39,7 @@ export function formatQuestion(q: Escalation): string {
   if (q.context && Object.keys(q.context).length) lines.push(`Context: ${JSON.stringify(q.context)}`);
   if (q.recent_steps?.length) lines.push(`Recent steps: ${q.recent_steps.slice(-4).join(' → ')}`);
   lines.push(`Answer with jev_answer {question_id: "${q.question_id}", type: ${q.answer_with.map((a) => `"${a}"`).join(' | ')}, ...}.`);
-  lines.push('  pick → ref (element or candidate id); hint → text (scope "domain" keeps it for this site); set_param → key, value, about;');
+  lines.push('  pick → ref (element or candidate id); none → the target is not on this page; hint → text (scope "domain" keeps it for this site); set_param → key, value, about;');
   lines.push('  thresholds → confidence; continue → proceed (after you acted yourself or to confirm a risky step); skip; abort. remember:true stores a pick for this site.');
   lines.push('Use jev_observe / jev_find / jev_screenshot on the task tab if you need to look first.');
   return lines.join('\n');
@@ -152,10 +152,10 @@ export function registerTaskTools(server: McpServer, deps: ToolDeps): void {
 
   server.registerTool('jev_answer', {
     title: 'Answer a JEV question',
-    description: 'Resolve a pending question (escalation). type: pick (ref), hint (text, scope), set_param (key, value, about, secret), thresholds (confidence), continue, skip, abort (reason). remember:true stores a pick as site memory.',
+    description: 'Resolve a pending question (escalation). type: pick (ref), none (the target is not on this page; the task then looks behind "more filters" or moves on), hint (text, scope), set_param (key, value, about, secret), thresholds (confidence), continue, skip, abort (reason). remember:true stores a pick as site memory.',
     inputSchema: {
       question_id: z.string(),
-      type: z.enum(['pick', 'hint', 'set_param', 'thresholds', 'continue', 'skip', 'abort']),
+      type: z.enum(['pick', 'none', 'hint', 'set_param', 'thresholds', 'continue', 'skip', 'abort']),
       ref: z.string().optional(),
       text: z.string().optional(),
       scope: z.enum(['task', 'domain']).optional(),

@@ -28,7 +28,21 @@ export interface ElementDraft {
   frameSessionId?: string;
   attrs: Record<string, string>;
   context?: string;
+  label?: string;
+  hints?: string[];
   order: number;
+}
+
+const UI_WORDS = ['sort', 'order', 'filter', 'search', 'next', 'prev', 'previous', 'more', 'advanced', 'close', 'dismiss', 'accept',
+  'cookie', 'consent', 'login', 'signin', 'logout', 'submit', 'price', 'date', 'calendar', 'city', 'region', 'menu', 'dropdown',
+  'select', 'modal', 'popup', 'cart', 'basket', 'checkout', 'pay', 'buy', 'pagination', 'pager', 'page', 'tab', 'toggle', 'expand',
+  'suggest', 'autocomplete', 'swap', 'reset', 'clear', 'favorite', 'share', 'banner', 'promo', 'subscribe', 'captcha'];
+
+/** Semantic UI words from class and id ("search-sort__button" -> sort). */
+export function semanticHints(attrs: Record<string, string>): string[] {
+  const text = `${attrs.class ?? ''} ${attrs.id ?? ''} ${attrs['data-testid'] ?? ''} ${attrs.name ?? ''}`.toLowerCase();
+  const tokens = new Set(text.split(/[^a-z]+/).filter(Boolean));
+  return UI_WORDS.filter((w) => tokens.has(w)).slice(0, 4);
 }
 
 export interface NodeInfo {
@@ -346,7 +360,8 @@ export function extractElements(raw: RawCapture): { drafts: ElementDraft[]; info
   for (const i of order) {
     const n = nodes[i];
     if (n.parent < 0) continue;
-    if (strong[i] || weak[i] || hasInteractiveBelow[i]) hasInteractiveBelow[n.parent] = 1;
+    // Only rendered controls count: a dropdown trigger keeps its hidden option list inside it.
+    if (((strong[i] || weak[i]) && isRendered(n, info[i])) || hasInteractiveBelow[i]) hasInteractiveBelow[n.parent] = 1;
   }
   for (let i = 0; i < nodes.length; i++) if (weak[i] && hasInteractiveBelow[i]) { weak[i] = 0; kinds[i] = null; }
 
@@ -475,7 +490,9 @@ export function extractElements(raw: RawCapture): { drafts: ElementDraft[]; info
   const textBoxByParentChain = textBoxes;
   for (const d of drafts) {
     if (!d.interactive) continue;
-    if (!d.name && d.visible) {
+    const hints = semanticHints(nodes[d.idx].attrs);
+    if (hints.length) d.hints = hints;
+    if (d.visible) {
       const near = findNearbyText(d.rect, textBoxByParentChain, (textIdx) => {
         // Same container: the lowest common ancestor is at most 4 levels above the control.
         let a = d.idx;
@@ -485,7 +502,8 @@ export function extractElements(raw: RawCapture): { drafts: ElementDraft[]; info
         }
         return false;
       });
-      if (near) { d.name = cleanText(near.text, 80); d.nameSource = 'nearby'; }
+      if (near && !d.name) { d.name = cleanText(near.text, 80); d.nameSource = 'nearby'; }
+      else if (near && near.text !== d.name && near.text.length <= 40 && !(d.text ?? '').includes(near.text)) d.label = cleanText(near.text, 40);
     }
     // Section heading: nearest preceding heading inside one of the first 6 ancestors, not crossing a landmark.
     let a = nodes[d.idx].parent;
