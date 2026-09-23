@@ -161,7 +161,17 @@ export async function groundByIntent(
   // Second look: full details of the top candidates, a relative choice plus an absolute fit check per candidate.
   const top = candidates.filter((c) => c.p >= 0.02).slice(0, 3);
   if (top.length < 2) {
-    return { ...base, ref: pick.choice, decision: gate === 'escalate' ? 'escalate' : 'act' };
+    // A single plausible candidate: check it on its own (full details, absolute fit) instead of comparing.
+    const only = pick.choice;
+    const fitState = buildState({ goal: gctx.goal, params: gctx.params, hints: gctx.hints, intent: intentState(intent), candidates: { [only]: renderElement(model, only) } }, gctx.budgetTokens);
+    const fit = await runQuestions(ctx, {
+      template: 'ground.rerank', state: fitState,
+      questions: { [`fit_${only}`]: { type: 'noul', instructions: `Is \`candidates.${only}\` \`intent.target\`?` } },
+    });
+    callIds.push(fit.callId); cost += fit.costUsd;
+    const verdict = gateNoul(noulOf(fit.answers, `fit_${only}`), th.ground.noul);
+    const decision = verdict === 'yes' || (verdict === 'unsure' && gate === 'uncertain') ? 'act' : 'escalate';
+    return { ...base, ref: only, stage: 'rerank', decision, callIds, costUsd: cost };
   }
   const details: Record<string, string> = {};
   for (const c of top) details[c.ref] = renderElement(model, c.ref);

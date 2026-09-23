@@ -51,6 +51,22 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     }
   }
 
+  const spec = (url: string) => ({
+    goal: 'Find the cheapest flight ticket from Almaty to Antalya departing in October 2026',
+    site: url,
+    params: {
+      from: { value: 'Алматы', about: 'departure city' },
+      to: { value: 'Анталия', about: 'destination city' },
+      period: { value: { from: '2026-10-01', to: '2026-10-31' }, about: 'departure date' },
+    },
+    result: { schema: { price: 'money', airline: 'string', depart: 'time', url: 'url' }, select: 'min(price)' },
+  });
+  const pickTop = (q: any) => (q.decision?.candidates?.[0] ? { type: 'pick', ref: q.decision.candidates[0].ref } : { type: 'continue' });
+  const templates = async (taskId: string) => {
+    const trace = await client.call('task.trace', { task_id: taskId });
+    return trace.steps.flatMap((s: any) => s.calls.map((c: any) => c.template)) as string[];
+  };
+
   it('finds the cheapest October flight Almaty → Antalya', async () => {
     const created = await client.call('task.create', {
       goal: 'Find the cheapest flight ticket from Almaty to Antalya departing in October 2026',
@@ -70,5 +86,17 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(result.result.selected.price.amount).toBe(38900);
     expect(result.result.items_count).toBe(30);
     expect(questions.length).toBeLessThanOrEqual(2);
+  }, 300_000);
+
+  it('uses site memory on the second run', async () => {
+    const created = await client.call('task.create', spec(fixtures.url('flights.html')));
+    const { result } = await runToEnd(created.task_id, pickTop);
+    expect(result.status).toBe('done');
+    expect(result.result.selected.price.amount).toBe(38900);
+    const used = await templates(created.task_id);
+    const memory = used.filter((t) => t === 'ground.memory_confirm').length;
+    const full = used.filter((t) => t === 'ground.element').length;
+    console.log(`second run: ${memory} memory confirmations, ${full} full groundings, ${used.length} calls`);
+    expect(memory).toBeGreaterThanOrEqual(4);
   }, 300_000);
 });
