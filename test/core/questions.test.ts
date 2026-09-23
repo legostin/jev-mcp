@@ -158,7 +158,12 @@ describe('param candidates', () => {
   it('admit links only when they show the value', async () => {
     const { candidateElements } = await import('../../src/core/questions/templates/ground.ts');
     const els = [el('e1', 'Toyota Camry', 'link'), el('e2', 'Новости', 'link'), el('e3', 'Модель', 'button')];
-    const refs = candidateElements(model(els), { target: 'x', kinds: ['button'], value: 'Camry', valueKinds: ['link'] }).map((e) => e.ref);
+    const m = model(els);
+    m.regions[1].kind = 'section';
+    const refs = candidateElements(m, { target: 'x', kinds: ['button'], value: 'Camry', valueKinds: ['link'] }).map((e) => e.ref);
     expect(refs).toEqual(['e1', 'e3']);
+    // Links in a form or toggling a dropdown ("Весь Казахстан ▾") are form controls.
+    const toggle = { ...el('e4', 'Весь Казахстан', 'link'), hints: ['region', 'dropdown'] };
+    expect(candidateElements(model([...els, toggle]), { target: 'x', kinds: ['button'], value: 'Алматы', valueKinds: ['link'] }).map((e) => e.ref)).toContain('e4');
   });
 });
