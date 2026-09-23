@@ -75,7 +75,10 @@ export function registerPageApi(rpc: RpcServer, ctx: DaemonContext): void {
     const tabs = await ctx.browsers.listTabs();
     const cur = await ctx.browsers.resolve(session(conn), undefined, { create: false }).catch(() => null);
     return {
-      tabs: tabs.map((t) => ({ id: t.id, url: t.url, title: t.title, driver: t.driver, task: t.lease ?? null, current: t.id === cur?.id })),
+      tabs: tabs.map((t) => ({
+        id: t.id, url: t.url, title: t.title, driver: t.driver, task: t.lease ?? null, current: t.id === cur?.id,
+        used: t.driver === 'chromium' || !!t.used || !!t.lease || t.id === cur?.id,
+      })),
       extensionConnected: ctx.browsers.extensionConnected,
     };
   });

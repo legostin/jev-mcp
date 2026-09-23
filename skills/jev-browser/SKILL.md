@@ -24,7 +24,7 @@ JEV is a *System One* model. It makes typed decisions (which element, which opti
 
 - `driver: "extension"` is the user's own Chrome, with their logins, through the jev extension. Prefer it for sites with accounts, bot checks or CAPTCHAs (travel, shopping, banking), and whenever the user may need to step in.
 - `driver: "chromium"` is jev's own Chrome profile. A headless profile cannot show a CAPTCHA to anyone, so do not use headless for sites with bot protection.
-- The default `auto` uses the extension when it is connected. `jev_tabs` shows whether it is. If the user needs the extension and it is not connected, tell them to load it and run `jev pair`.
+- The default `auto` uses the extension when it is connected. `jev_tabs` shows whether it is, and lists the tabs jev works with (the user's other tabs only with `all: true`). If the user needs the extension and it is not connected, tell them to load it and run `jev pair`.
 
 ## Write a task
 

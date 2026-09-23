@@ -145,8 +145,9 @@ export function registerPageTools(server: McpServer, deps: ToolDeps): void {
       url: z.string().optional(),
       tab: z.string().optional(),
       driver: z.enum(['auto', 'extension', 'chromium']).optional(),
+      all: z.boolean().optional().describe('list: include every tab of the user\'s Chrome, not only the tabs jev works with.'),
     },
-  }, wrap(deps, async (a: { action?: string; url?: string; tab?: string; driver?: string }) => {
+  }, wrap(deps, async (a: { action?: string; url?: string; tab?: string; driver?: string; all?: boolean }) => {
     const action = a.action ?? 'list';
     if (action === 'open') {
       const r = await bridge.call('tabs.open', { url: a.url, driver: a.driver });
@@ -155,8 +156,13 @@ export function registerPageTools(server: McpServer, deps: ToolDeps): void {
     if (action === 'close') { if (!a.tab) return errorResult('close needs tab'); await bridge.call('tabs.close', { tab: a.tab }); return text(`closed ${a.tab}`); }
     if (action === 'select') { if (!a.tab) return errorResult('select needs tab'); const r = await bridge.call('tabs.select', { tab: a.tab }); return text(`current tab ${r.tab} · ${r.url}`); }
     const r = await bridge.call('tabs.list');
-    const lines = r.tabs.map((t: any) => `${t.current ? '*' : ' '} ${t.id} [${t.driver}]${t.task ? ` task ${t.task}` : ''} ${t.title ? `"${t.title}" ` : ''}${t.url}`);
-    return text(`${lines.join('\n') || 'no tabs'}\nextension: ${r.extensionConnected ? 'connected' : 'not connected'}`);
+    // The user's own tabs stay out of the agent's context (and out of sight) unless asked for.
+    const shown = a.all ? r.tabs : r.tabs.filter((t: any) => t.used);
+    const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+    const lines = shown.map((t: any) => `${t.current ? '*' : ' '} ${t.id} [${t.driver}]${t.task ? ` task ${t.task}` : ''} ${t.title ? `"${cut(t.title, 80)}" ` : ''}${cut(t.url, 120)}`);
+    const hidden = r.tabs.length - shown.length;
+    const more = hidden > 0 ? `\n${hidden} other tab(s) in your Chrome are not listed (all: true lists them).` : '';
+    return text(`${lines.join('\n') || 'no tabs jev works with yet'}${more}\nextension: ${r.extensionConnected ? 'connected' : 'not connected'}`);
   }));
 
   server.registerTool('jev_screenshot', {

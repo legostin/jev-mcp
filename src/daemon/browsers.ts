@@ -23,6 +23,8 @@ export interface TabHandle {
   prevModel?: Model;
   /** Task that currently owns this tab. */
   lease?: string;
+  /** jev opened this tab, attached to it, or it was opened from such a tab (listings show these first). */
+  used?: boolean;
 }
 
 /** Owns the drivers and a registry of tabs with short, stable ids (t1, t2, …). */
@@ -94,6 +96,7 @@ export class BrowserManager {
       const opener = this.byTarget.get(`${d.kind}:${info.openerId}`);
       if (!opener) return;
       const t = this.register(d.kind, info.id, info.url, '');
+      if (this.tabs.get(opener)?.used) t.used = true;
       this.popups.push({ tabId: t.id, openerTab: opener, at: Date.now() });
       this.popups = this.popups.filter((p) => Date.now() - p.at < 600_000);
     });
@@ -153,6 +156,7 @@ export class BrowserManager {
     const d = await this.driver(kind);
     const info = await d.openTab('about:blank');
     const t = this.register(d.kind, info.id, url ?? 'about:blank', '');
+    t.used = true;
     if (url && url !== 'about:blank') {
       const page = await this.page(t.id);
       await page.navigate(url);
@@ -188,6 +192,7 @@ export class BrowserManager {
     });
     page.on('navigated', ({ url }) => { t.url = url; });
     t.page = page;
+    t.used = true;
     return page;
   }
 
