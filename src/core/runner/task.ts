@@ -926,7 +926,20 @@ export class Task extends Emitter<TaskEvents> {
   /** Custom dropdowns (div-based selects, multi-select checkboxes): open, pick the option matching the value, close. */
   private async pickFromDropdown(k: string, trigger: ElementNode, model: Model): Promise<Outcome> {
     const p = this.params[k];
-    if (normalizeText(trigger.text ?? trigger.name).includes(normalizeText(String(p.value)))) {
+    const want = normalizeText(String(p.value));
+    const label = normalizeText(trigger.name);
+    if (label === want) {
+      // A quick-select button that IS the value ("Павлодар", "Toyota"): press it unless it is already on.
+      if (!trigger.states.selected && !trigger.states.checked) {
+        await this.click(trigger);
+        await this.settle();
+      }
+      this.status[k] = 'done';
+      this.dirty = true;
+      this.settleGrounding(true);
+      return { outcome: 'ok', note: `pressed ${trigger.ref} "${trigger.name}" for ${k}`, action: { type: 'click', ref: trigger.ref, param: k } };
+    }
+    if (normalizeText(trigger.text ?? trigger.name).includes(want)) {
       this.status[k] = 'done';
       return { outcome: 'ok', note: `${k} already set in ${trigger.ref} "${trigger.name}"` };
     }
@@ -1184,10 +1197,15 @@ export class Task extends Emitter<TaskEvents> {
     const refs = Object.values(this.paramRefs).map((r) => model.elements.get(r)).filter(Boolean) as ElementNode[];
     const regionCounts = new Map<string, number>();
     for (const e of refs) regionCounts.set(e.regionId, (regionCounts.get(e.regionId) ?? 0) + 1);
-    const formRegion = [...regionCounts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
+    // Search in the whole form around the fields: the fields often sit in a sub-region, the button does not.
+    const fieldRegion = [...regionCounts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
+    let formRegion: string | undefined;
+    for (let r = model.regions.find((x) => x.id === fieldRegion); r; r = model.regions.find((x) => x.id === r!.parentId)) {
+      if (r.kind === 'form') { formRegion = r.id; break; }
+    }
     const g = await this.ground(sub, {
-      target: 'the button that submits the form and starts the search', kinds: ['button', 'clickable', 'link'],
-      regionId: formRegion && formRegion !== 'r0' ? formRegion : undefined, action: 'click',
+      target: 'the button that submits the form and starts the search (or shows the matching results)', kinds: ['button', 'clickable', 'link'],
+      regionId: formRegion, action: 'click',
     }, 'submit');
     if (!g.el) {
       if (g.res?.decision === 'none') {
