@@ -160,6 +160,8 @@ export class Task extends Emitter<TaskEvents> {
   /** Error pages already reloaded once (by URL). */
   private reloaded = new Set<string>();
   private noResultsOn: string | null = null;
+  /** Address right after the last submit: a later change means the site applied filters itself. */
+  private lastSubmitUrl: string | null = null;
   /** Params changed since the last submit: filters on list pages apply only after "Show N results". */
   private dirty = false;
   private sortTried = false;
@@ -686,11 +688,6 @@ export class Task extends Emitter<TaskEvents> {
       this.seen.set(loopKey, Math.max(0, seen - 1));
     }
     if (out.outcome === 'ok') this.rejected.delete(subLabel);
-    // After a search, a filter that moved the page (new URL) was applied by the site itself: no second submit.
-    const afterUrl = this.deps.port.lastModel()?.url;
-    if (out.outcome === 'ok' && this.submitsDone > 0 && ['fill_param', 'pick_suggestion', 'pick_date'].includes(sub.type) && afterUrl && afterUrl !== model.url) {
-      this.dirty = false;
-    }
     if (out.outcome === 'failed') {
       const n = (this.failures.get(subLabel) ?? 0) + 1;
       this.failures.set(subLabel, n);
@@ -812,6 +809,8 @@ export class Task extends Emitter<TaskEvents> {
     const pendingKeys = Object.keys(this.params).filter((k) => (this.status[k] === 'pending' || this.status[k] === 'typed')
       && (this.absentOn[k] !== model.signature || !this.revealTried.has(k)));
     const hasForm = model.regions.some((r) => r.kind === 'form');
+    // After a search, filters that moved the page to a new address were applied by the site: no second submit.
+    if (this.dirty && this.submitsDone > 0 && this.lastSubmitUrl && model.url !== this.lastSubmitUrl) this.dirty = false;
     if (this.spec.result && this.dirty && hasForm && !pendingKeys.length) return { type: 'submit' };
     if (this.spec.result && !(pendingKeys.length && hasForm) && (a.pageKind === 'results_list' || (yes(a.resultsMatch) && model.regions.some((r) => r.kind === 'list')))) {
       // For min/max, let the site sort first: then the first page holds the answer instead of every page.
@@ -1451,10 +1450,13 @@ export class Task extends Emitter<TaskEvents> {
     await this.settle();
     const switched = await this.followPopups(clickedAt, 'the search results');
     if (switched) {
+      this.lastSubmitUrl = this.model?.url ?? null;
+      this.lastSubmitUrl = this.model?.url ?? null;
       this.settleGrounding(true);
       return { outcome: 'ok', note: `clicked submit ${g.el.ref} "${g.el.name}"; ${switched}`, action: { type: 'click', ref: g.el.ref } };
     }
     const after = await this.observe(false);
+    this.lastSubmitUrl = after.url;
     const diff = diffModels(model, after);
     const newRegions = diff.newRegions.map((id) => after.regions.find((r) => r.id === id)).filter(Boolean) as Region[];
     const progressed = after.url !== beforeUrl || newRegions.some((r) => r.kind === 'list')
