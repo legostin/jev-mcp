@@ -16,7 +16,7 @@ const CURRENCY: Array<[RegExp, string]> = [
 
 /** Parses "41 230", "1,234.56", "1 234,56", "1.234.567" into a number. */
 export function parseNumber(text: string): number | null {
-  const m = text.replace(/[   ]/g, ' ').match(/-?\d[\d\s.,']*/);
+  const m = text.replace(/[\u00a0\u2009\u202f]/g, ' ').match(/-?\d[\d\s.,']*/);
   if (!m) return null;
   let s = m[0].trim().replace(/[\s']/g, '');
   const lastComma = s.lastIndexOf(',');
@@ -80,7 +80,8 @@ export function parseBoolean(text: string): boolean | null {
   return t ? true : null;
 }
 
-export function parseField(type: FieldType, text: string, base: string, ref?: { year: number; month: number }): unknown {
+export function parseField(type: FieldType, raw: string, base: string, ref?: { year: number; month: number }): unknown {
+  const text = raw.replace(/[\u200b-\u200d\u2060\ufeff\u00ad]/g, '');
   switch (type) {
     case 'number': return parseNumber(text);
     case 'money': return parseMoney(text);

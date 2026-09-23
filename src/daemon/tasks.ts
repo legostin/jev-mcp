@@ -22,14 +22,25 @@ interface Waiter {
   resolve: (e: TaskEvent | null) => void;
 }
 
-function portFor(ctx: DaemonContext, tab: TabHandle, taskId: string): TabPort {
+function portFor(ctx: DaemonContext, initial: TabHandle, taskId: string): TabPort {
+  let tab = initial;
   tab.lease = taskId;
   return {
-    tabId: tab.id,
+    get tabId() { return tab.id; },
     page: () => ctx.browsers.page(tab.id),
     observe: (opts) => ctx.browsers.observe(tab.id, opts),
     lastModel: () => tab.model,
     release: () => { if (tab.lease === taskId) tab.lease = undefined; },
+    reset: () => ctx.browsers.reattach(tab.id),
+    popupsSince: (since) => ctx.browsers.popupsOf(tab.id, since).map((t) => ({ id: t.id, url: t.url, title: t.title })),
+    peek: (id) => ctx.browsers.observe(id),
+    switchTo: (id) => {
+      if (tab.lease === taskId) tab.lease = undefined;
+      tab = ctx.browsers.get(id);
+      tab.lease = taskId;
+      void ctx.browsers.driver(tab.driver).then((d) => d.activateTab(tab.targetId)).catch(() => {});
+    },
+    interactive: () => ctx.browsers.interactive(tab.id),
   };
 }
 

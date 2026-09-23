@@ -16,5 +16,9 @@ export interface BrowserDriver {
   activateTab(tabId: string): Promise<void>;
   close(): Promise<void>;
   onDisconnect(listener: () => void): () => void;
+  /** New tabs, with the tab that opened them when known (popups, target=_blank, window.open). */
+  onTabCreated?(listener: (tab: { id: string; openerId?: string; url: string }) => void): () => void;
   readonly connected: boolean;
+  /** Whether a person can see and use this browser (headless browsers cannot be taken over). */
+  readonly interactive?: boolean;
 }

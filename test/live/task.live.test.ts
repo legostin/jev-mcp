@@ -88,6 +88,17 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(questions.length).toBeLessThanOrEqual(2);
   }, 300_000);
 
+  it('follows results that open in a new tab', async () => {
+    const created = await client.call('task.create', spec(fixtures.url('flights.html?newtab=1')));
+    const { result } = await runToEnd(created.task_id, pickTop);
+    const trace = await client.call('task.trace', { task_id: created.task_id });
+    const notes = trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ');
+    console.log(`new-tab run: ${notes}`);
+    expect(result.status).toBe('done');
+    expect(result.result.selected.price.amount).toBe(38900);
+    expect(notes).toMatch(/continued in the new tab/);
+  }, 300_000);
+
   it('uses site memory on the second run', async () => {
     const created = await client.call('task.create', spec(fixtures.url('flights.html')));
     const { result } = await runToEnd(created.task_id, pickTop);

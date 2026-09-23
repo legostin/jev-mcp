@@ -3,7 +3,7 @@ import type { NameSource, Rect } from './types.ts';
 
 export function cleanText(text: string | undefined, max = 100): string {
   if (!text) return '';
-  const t = text.replace(/[   ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const t = text.replace(/[\u200b-\u200d\u2060\ufeff\u00ad]/g, '').replace(/[\u00a0\u2009\u202f]/g, ' ').replace(/\s+/g, ' ').trim();
   return t.length > max ? t.slice(0, max - 1) + '…' : t;
 }
 

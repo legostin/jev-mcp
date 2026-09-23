@@ -192,7 +192,14 @@ $('#search').addEventListener('submit', (e) => {
   if (!state.date) err.push('Укажите дату вылета');
   $('#err').textContent = err.join('. ');
   if (err.length) return;
-  location.href = `results.html?from=${from}&to=${to}&date=${state.date}`;
+  const results = `results.html?from=${from}&to=${to}&date=${state.date}`;
+  if (new URLSearchParams(location.search).get('newtab') === '1') {
+    // Like aviasales with "open hotels in a new tab": results open in a new tab, this tab goes to hotels.
+    window.open(results, '_blank');
+    location.href = 'hotels.html';
+    return;
+  }
+  location.href = results;
 });
 
 // Consent wall shortly after load.

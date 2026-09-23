@@ -47,8 +47,14 @@ class ExtensionDriver implements BrowserDriver {
   private readonly bridge: ExtensionBridge;
   readonly tabs = new Map<number, ExtTabConnection>();
   private disconnectListeners = new Set<() => void>();
+  readonly createdListeners = new Set<(tab: { id: string; openerId?: string; url: string }) => void>();
   constructor(bridge: ExtensionBridge) { this.bridge = bridge; }
   get connected(): boolean { return this.bridge.connected; }
+  get interactive(): boolean { return true; }
+  onTabCreated(listener: (tab: { id: string; openerId?: string; url: string }) => void): () => void {
+    this.createdListeners.add(listener);
+    return () => this.createdListeners.delete(listener);
+  }
   private info(t: ExtTab): TabInfo { return { id: String(t.tabId), url: t.url, title: t.title, driver: 'extension' }; }
   async listTabs(): Promise<TabInfo[]> { return ((await this.bridge.call('listTabs', {})) as ExtTab[]).map((t) => this.info(t)); }
   async openTab(url?: string): Promise<TabInfo> { return this.info(await this.bridge.call('openTab', { url }) as ExtTab); }
@@ -209,6 +215,10 @@ export class ExtensionBridge {
           conn.d.shutdown(msg.reason === 'tab closed' ? 'tab closed' : `detached: ${msg.reason}`);
           this.driver.tabs.delete(msg.tabId);
         }
+        return;
+      }
+      case 'tab_created': {
+        for (const l of [...this.driver.createdListeners]) l({ id: String(msg.tabId), openerId: msg.openerTabId !== undefined ? String(msg.openerTabId) : undefined, url: msg.url });
         return;
       }
       case 'ui': {

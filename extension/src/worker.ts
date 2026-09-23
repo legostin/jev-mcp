@@ -122,6 +122,11 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   send({ type: 'detached', tabId: source.tabId, reason });
 });
 
+chrome.tabs.onCreated.addListener((tab) => {
+  if (tab.id === undefined) return;
+  send({ type: 'tab_created', tabId: tab.id, openerTabId: tab.openerTabId, url: tab.pendingUrl ?? tab.url ?? '' });
+});
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (attached.has(tabId)) { attached.delete(tabId); send({ type: 'detached', tabId, reason: 'tab closed' }); }
 });

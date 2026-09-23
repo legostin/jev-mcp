@@ -119,17 +119,32 @@ export function buildPageModel(raw: RawCapture, prev?: PageModel & Partial<Model
     region.items = rd.items.map((itemIdx) => drafts.filter((d) => isDescendant(info, itemIdx, d.idx)).map((d) => refByIdx.get(d.idx)!));
   }
 
-  // Blocking overlays: they (or their backdrop) cover interactive elements of other regions.
+  // Blocking overlays: modal-like layers that cover interactive elements of other regions. A layer counts as
+  // modal when it is a dialog, covers the viewport centre or a large part of it, or sits on a backdrop. Thin bars
+  // (cookie strips, sticky promos) are not blocking: clicks scroll targets clear of them.
   const layered = regionDrafts.filter((rd) => rd.kind === 'overlay' || rd.kind === 'dialog');
+  const vw = raw.viewport.w;
+  const vh = raw.viewport.h;
+  const modalLike = (rd: RegionDraft, viaBackdrop: boolean) => {
+    if (rd.kind === 'dialog' || viaBackdrop) return true;
+    const r = rd.rect;
+    const coversCenter = r.x <= vw / 2 && r.x + r.w >= vw / 2 && r.y <= vh / 2 && r.y + r.h >= vh / 2;
+    return coversCenter || r.w * r.h >= vw * vh * 0.3;
+  };
   for (const d of drafts) {
     if (!d.occluded || d.occluderIdx === undefined) continue;
     const occ = d.occluderIdx;
     let owner = layered.find((rd) => rd.anchor === occ || isDescendant(info, rd.anchor, occ));
+    let viaBackdrop = false;
     if (!owner && layered.length) {
-      // A backdrop sibling: attribute to the top-most modal layer.
-      owner = [...layered].sort((a, b) => b.paintOrder - a.paintOrder)[0];
+      // A backdrop sibling: attribute to the top-most modal layer, if the occluder really is a large backdrop.
+      const o = raw.nodes[occ];
+      if (o.rect && o.rect.w * o.rect.h >= vw * vh * 0.5) {
+        owner = [...layered].sort((a, b) => b.paintOrder - a.paintOrder)[0];
+        viaBackdrop = true;
+      }
     }
-    if (owner && !isDescendant(info, owner.anchor, d.idx)) draftRegion.get(owner)!.blocking = true;
+    if (owner && !isDescendant(info, owner.anchor, d.idx) && modalLike(owner, viaBackdrop)) draftRegion.get(owner)!.blocking = true;
   }
 
   const focused = drafts.find((d) => d.states.focused);

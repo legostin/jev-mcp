@@ -34,6 +34,8 @@ export class BrowserManager {
   private byTarget = new Map<string, string>();
   private current = new Map<string, string>();
   private seq = 0;
+  private popups: Array<{ tabId: string; openerTab: string; at: number }> = [];
+  private hooked = new WeakSet<BrowserDriver>();
   private readonly getConfig: () => Config;
   onTabClosed: (tab: TabHandle) => void = () => {};
 
@@ -73,11 +75,39 @@ export class BrowserManager {
   }
 
   async driver(kind: DriverKind | 'auto' = this.getConfig().driver.default): Promise<BrowserDriver> {
+    let d: BrowserDriver;
     if (kind === 'extension' || (kind === 'auto' && this.extensionConnected)) {
-      if (this.extensionDriver?.connected) return this.extensionDriver;
-      if (kind === 'extension') throw new RpcError(ERR.browser, 'The jev Chrome extension is not connected. Load it and pair it (jev pair), or use driver "chromium".');
-    }
-    return this.chromiumDriver();
+      if (this.extensionDriver?.connected) d = this.extensionDriver;
+      else if (kind === 'extension') throw new RpcError(ERR.browser, 'The jev Chrome extension is not connected. Load it and pair it (jev pair), or use driver "chromium".');
+      else d = await this.chromiumDriver();
+    } else d = await this.chromiumDriver();
+    this.hookPopups(d);
+    return d;
+  }
+
+  /** Remembers tabs opened by known tabs (results that open in a new tab, window.open, target=_blank). */
+  private hookPopups(d: BrowserDriver): void {
+    if (this.hooked.has(d) || !d.onTabCreated) return;
+    this.hooked.add(d);
+    d.onTabCreated((info) => {
+      if (!info.openerId) return;
+      const opener = this.byTarget.get(`${d.kind}:${info.openerId}`);
+      if (!opener) return;
+      const t = this.register(d.kind, info.id, info.url, '');
+      this.popups.push({ tabId: t.id, openerTab: opener, at: Date.now() });
+      this.popups = this.popups.filter((p) => Date.now() - p.at < 600_000);
+    });
+  }
+
+  /** Tabs opened by `tabId` since `since`. */
+  popupsOf(tabId: string, since: number): TabHandle[] {
+    return this.popups.filter((p) => p.openerTab === tabId && p.at >= since && this.tabs.has(p.tabId)).map((p) => this.tabs.get(p.tabId)!);
+  }
+
+  interactive(id: string): boolean {
+    const t = this.get(id);
+    const d = t.driver === 'extension' ? this.extensionDriver : this.chromium;
+    return d?.interactive ?? true;
   }
 
   private register(driver: DriverKind, targetId: string, url: string, title: string): TabHandle {
@@ -159,6 +189,15 @@ export class BrowserManager {
     page.on('navigated', ({ url }) => { t.url = url; });
     t.page = page;
     return page;
+  }
+
+  /** Drops the tab's CDP session and attaches a fresh one (recovery from a stuck connection). */
+  async reattach(id: string): Promise<void> {
+    const t = this.get(id);
+    const old = t.page;
+    t.page = null;
+    await old?.close().catch(() => {});
+    await this.page(id);
   }
 
   setCurrent(sessionId: string, tabId: string): void { this.current.set(sessionId, tabId); }

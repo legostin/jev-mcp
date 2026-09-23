@@ -15,6 +15,7 @@ import { buildSuggestionPick, buildOptionPick, buildGoalPrefs } from '../questio
 import { buildActionClass, readActionClass } from '../questions/templates/safety.ts';
 import { buildVerify, readVerify } from '../questions/templates/verify.ts';
 import { runQuestions, choiceOf, noulOf, type QuestionContext } from '../questions/run.ts';
+import { buildState } from '../questions/state.ts';
 import { gateChoice, gateNoul, topCandidates } from '../decide/gating.ts';
 import { extractResults, type ExtractOutput } from '../extract/extract.ts';
 import { inRange } from '../extract/dates.ts';
@@ -44,6 +45,16 @@ export interface TabPort {
   observe(opts?: { settle?: boolean }): Promise<Model>;
   lastModel(): Model | undefined;
   release(): void;
+  /** Drops and re-creates the CDP session for the tab (recovery from a hung renderer connection). */
+  reset?(): Promise<void>;
+  /** Tabs this task's tab opened since a time (results opened in a new tab). */
+  popupsSince?(since: number): { id: string; url: string; title: string }[];
+  /** Observes another tab without switching to it. */
+  peek?(tabId: string): Promise<Model>;
+  /** Moves the task to another tab (it takes the lease). */
+  switchTo?(tabId: string): void;
+  /** False for browsers nobody can see (headless): user takeover detection is skipped. */
+  interactive?(): boolean;
 }
 
 export interface TaskDeps {
@@ -130,6 +141,8 @@ export class Task extends Emitter<TaskEvents> {
   private lastInputCheck = 0;
   private model: Model | undefined;
   private assessCache: { sig: string; out: AssessOutput } | null = null;
+  private dismissed = new Set<string>();
+  private submitsDone = 0;
 
   constructor(spec: TaskSpec, deps: TaskDeps, id = newId('t')) {
     super();
@@ -286,6 +299,14 @@ export class Task extends Emitter<TaskEvents> {
       this.model = await this.deps.port.observe({ settle });
       return this.model;
     } catch (e) {
+      if (this.deps.port.reset) {
+        log.warn(`task ${this.id}: observation failed (${(e as Error).message}); re-attaching to the tab`);
+        try {
+          await this.deps.port.reset();
+          this.model = await this.deps.port.observe({ settle });
+          return this.model;
+        } catch { /* fall through */ }
+      }
       throw new Interrupted(`could not read the page: ${(e as Error).message}`);
     }
   }
@@ -310,9 +331,9 @@ export class Task extends Emitter<TaskEvents> {
       const a = await this.escalate('budget', `JEV spend $${this.cost.toFixed(4)} exceeded the task budget $${budget.toFixed(2)}.`, { answer_with: ['continue', 'abort'] });
       if (a.type === 'continue') this.budgetBonus += budget;
     }
-    // A person using the tab takes over: pause until resumed.
+    // A person using the tab takes over: pause until resumed (only where a person can see the browser).
     const page = await this.page();
-    if (this.state === 'running' && await page.userInputSince(this.lastInputCheck)) {
+    if (this.state === 'running' && this.deps.port.interactive?.() !== false && await page.userInputSince(this.lastInputCheck)) {
       this.note('paused: user interacted with the tab');
       this.pause('user_takeover');
       this.lastInputCheck = this.now();
@@ -555,7 +576,10 @@ export class Task extends Emitter<TaskEvents> {
 
   private async assess(model: Model): Promise<AssessOutput> {
     if (this.assessCache?.sig === model.signature) return this.assessCache.out;
-    const overlays = model.regions.filter((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking);
+    const overlays = [
+      ...model.regions.filter((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking),
+      ...model.regions.filter((r) => r.kind === 'overlay' && !r.blocking && !this.dismissed.has(r.sig) && this.regionVisible(model, r)).slice(0, 2),
+    ];
     const allDone = Object.values(this.status).every((s) => s !== 'pending' && s !== 'typed');
     const input = {
       model, goal: this.spec.goal, params: this.params, progress: this.status, hints: this.hints,
@@ -585,18 +609,28 @@ export class Task extends Emitter<TaskEvents> {
       const kind = a.overlays[r.id]?.kind ?? 'other';
       return { type: 'dismiss_overlay', region: r.id, overlayKind: kind };
     }
+    // Non-blocking cookie notices are dismissed once, proactively (they tend to cover results and buttons).
+    for (const r of model.regions) {
+      const o = a.overlays[r.id];
+      if (r.kind === 'overlay' && !r.blocking && !this.dismissed.has(r.sig) && o?.kind === 'cookie_consent' && o.confidence >= th.assess.choice.act) {
+        return { type: 'dismiss_overlay', region: r.id, overlayKind: 'cookie_consent' };
+      }
+    }
     // Suggestions right after typing a param.
     if (this.lastTypedKey && this.lastSub?.type === 'fill_param' && this.status[this.lastTypedKey] !== 'skipped' && this.popupOptions(model).length) {
       return { type: 'pick_suggestion', key: this.lastTypedKey };
     }
     // An open calendar with a pending date param.
     const pendingDate = Object.keys(this.params).find((k) => paramKind(this.params[k]) === 'date' && this.status[k] === 'pending');
-    if (pendingDate && parseCalendarCells(model, this.refDate()).length >= 7) return { type: 'pick_date', key: pendingDate };
-    if (this.spec.result && (a.pageKind === 'results_list' || (yes(a.resultsMatch) && model.regions.some((r) => r.kind === 'list')))) {
+    if (pendingDate && this.popupCalendar(model).length >= 7) return { type: 'pick_date', key: pendingDate };
+    // Params come first while the page still has a form for them (sites often preview results before the search).
+    const pendingKeys = Object.keys(this.params).filter((k) => (this.status[k] === 'pending' || this.status[k] === 'typed') && this.absentOn[k] !== model.signature);
+    const hasForm = model.regions.some((r) => r.kind === 'form');
+    if (this.spec.result && !(pendingKeys.length && hasForm) && (a.pageKind === 'results_list' || (yes(a.resultsMatch) && model.regions.some((r) => r.kind === 'list')))) {
       return { type: 'extract' };
     }
     if (!this.spec.result && yes(a.goalReached) && Object.values(this.status).every((s) => s !== 'pending')) return { type: 'done', reason: 'goal reached' };
-    const onForm = ['search_form', 'login', 'other', 'item_details', 'checkout'].includes(a.pageKind);
+    const onForm = ['search_form', 'login', 'other', 'item_details', 'checkout'].includes(a.pageKind) || (hasForm && pendingKeys.length > 0);
     if (onForm) {
       for (const k of Object.keys(this.params)) {
         const s = this.status[k];
@@ -619,7 +653,7 @@ export class Task extends Emitter<TaskEvents> {
         if (ans.type === 'set_param' || ans.type === 'hint') return this.chooseSubintent(await this.observe(false), a);
       }
       const anyDone = Object.values(this.status).some((s) => s === 'done');
-      if (a.pageKind === 'search_form' && (anyDone || Object.keys(this.params).length === 0)) return { type: 'submit' };
+      if ((a.pageKind === 'search_form' || (hasForm && this.submitsDone === 0 && anyDone)) && (anyDone || Object.keys(this.params).length === 0)) return { type: 'submit' };
     }
     return this.decideFallback(model, a);
   }
@@ -720,8 +754,13 @@ export class Task extends Emitter<TaskEvents> {
     await (await this.page()).click(el.backendNodeId, { sessionId: el.frameSessionId });
   }
 
+  private regionVisible(model: Model, r: Region): boolean {
+    return r.refs.some((ref) => { const e = model.elements.get(ref); return !!e && e.visible && e.inViewport; });
+  }
+
   private async dismissOverlay(sub: Extract<Subintent, { type: 'dismiss_overlay' }>, model: Model): Promise<Outcome> {
     const region = model.regions.find((r) => r.id === sub.region) as Region;
+    if (region) this.dismissed.add(region.sig);
     const what = sub.overlayKind === 'cookie_consent' ? 'the button that accepts the cookie notice (or closes it)'
       : sub.overlayKind === 'login_wall' ? 'the button that closes the sign-in prompt without signing in'
       : `the button that closes or dismisses this ${sub.overlayKind === 'promo' ? 'promotion' : 'overlay'} without signing up or buying`;
@@ -744,7 +783,7 @@ export class Task extends Emitter<TaskEvents> {
     await this.click(g.el);
     await this.settle();
     const after = await this.observe(false);
-    const ok = !after.regions.some((r) => r.id === sub.region && r.blocking);
+    const ok = !after.regions.some((r) => r.id === sub.region && (r.blocking || this.regionVisible(after, r)));
     this.settleGrounding(ok);
     return { outcome: ok ? 'ok' : 'failed', note: `${ok ? 'dismissed' : 'tried to dismiss'} ${sub.overlayKind} overlay via ${g.el.ref} "${g.el.name}"`, action: { type: 'click', ref: g.el.ref } };
   }
@@ -866,7 +905,8 @@ export class Task extends Emitter<TaskEvents> {
     const about = p.about ?? k.replace(/_/g, ' ');
     const page = await this.page();
     let current = model;
-    let cells = parseCalendarCells(current, this.refDate());
+    // Only an open picker counts before we click the date field (pages also list prices by date elsewhere).
+    let cells = this.popupCalendar(current);
     if (cells.length < 7) {
       const g = await this.ground(sub, { target: `the field or button that opens the date picker for the ${about}`, kinds: ['textbox', 'combobox', 'button', 'clickable', 'link'], action: 'click' }, `date:${k}`);
       if (!g.el) {
@@ -922,6 +962,43 @@ export class Task extends Emitter<TaskEvents> {
     return { outcome: 'failed', note: `no selectable date for ${k} within 14 months` };
   }
 
+  /**
+   * Sites often open results in a new tab (and send the old tab elsewhere). If our tab opened tabs, JEV picks the
+   * tab that continues the goal and the task moves there.
+   */
+  private async followPopups(since: number, what: string): Promise<string | null> {
+    const port = this.deps.port;
+    if (!port.popupsSince || !port.peek || !port.switchTo) return null;
+    await new Promise((r) => setTimeout(r, 600));
+    const popups = port.popupsSince(since);
+    if (!popups.length) return null;
+    const current = await this.observe(false);
+    const tabs: Record<string, string> = { current: `"${current.title}" ${current.url}` };
+    const ids: Record<string, string> = {};
+    for (const [i, p] of popups.slice(0, 5).entries()) {
+      const m = await port.peek(p.id).catch(() => null);
+      tabs[`new_${i}`] = m ? `"${m.title}" ${m.url}` : `${p.title} ${p.url}`;
+      ids[`new_${i}`] = p.id;
+    }
+    const criteria = Object.fromEntries(Object.keys(tabs).map((k) => [k, null]));
+    const res = await runQuestions(this.qctx(), {
+      template: 'tabs.follow',
+      state: buildState({ goal: this.spec.goal, extra: { tabs, expected: what } }, this.budget()),
+      questions: { tab: { type: 'choice', instructions: 'Which tab in `tabs` shows `expected` for `goal`?', criteria } },
+    });
+    const pick = choiceOf(res.answers, 'tab');
+    if (pick.choice === 'current' || !ids[pick.choice]) return null;
+    port.switchTo(ids[pick.choice]);
+    this.note(`followed a new tab: ${tabs[pick.choice]}`);
+    await this.observe();
+    return `continued in the new tab ${tabs[pick.choice]}`;
+  }
+
+  /** Calendar cells inside an open popup, overlay or dialog. */
+  private popupCalendar(model: Model) {
+    return parseCalendarCells(model, this.refDate()).filter((c) => this.layerRegion(model, c.regionId) !== undefined);
+  }
+
   /** The popup/overlay/dialog layer that contains a region (calendar grids are lists inside a popup). */
   private layerRegion(model: Model, regionId: string): string | undefined {
     let r = model.regions.find((x) => x.id === regionId);
@@ -951,11 +1028,27 @@ export class Task extends Emitter<TaskEvents> {
     }
     if (await this.guard(g.el, 'submit the form', true) === 'skip') return { outcome: 'skipped', note: 'submit not approved' };
     const beforeUrl = model.url;
+    this.submitsDone++;
+    const clickedAt = this.now();
     await this.click(g.el);
     await this.settle();
+    const switched = await this.followPopups(clickedAt, 'the search results');
+    if (switched) {
+      this.settleGrounding(true);
+      return { outcome: 'ok', note: `clicked submit ${g.el.ref} "${g.el.name}"; ${switched}`, action: { type: 'click', ref: g.el.ref } };
+    }
     const after = await this.observe(false);
     const diff = diffModels(model, after);
-    const progressed = after.url !== beforeUrl || diff.newRegions.length > 0 || after.regions.some((r) => r.kind === 'list');
+    const newRegions = diff.newRegions.map((id) => after.regions.find((r) => r.id === id)).filter(Boolean) as Region[];
+    const progressed = after.url !== beforeUrl || newRegions.some((r) => r.kind === 'list')
+      || newRegions.filter((r) => r.kind !== 'popup' && r.kind !== 'overlay' && r.kind !== 'dialog').length >= 2;
+    // The form may answer a submit by opening its date picker: the date is missing or was not taken.
+    const dateKey = Object.keys(this.params).find((k) => paramKind(this.params[k]) === 'date');
+    if (!progressed && dateKey && this.popupCalendar(after).length >= 7) {
+      this.status[dateKey] = 'pending';
+      this.settleGrounding(true);
+      return { outcome: 'retry', note: 'submit opened the date picker; picking the date again', action: { type: 'click', ref: g.el.ref } };
+    }
     let ok = progressed;
     if (!progressed) {
       const res = await runQuestions(this.qctx(), buildVerify('clicked the search/submit button', 'the search started or results appeared', renderDiff(diff, after, 10), after, this.budget()));

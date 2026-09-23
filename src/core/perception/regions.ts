@@ -97,8 +97,9 @@ export function detectRegions(raw: RawCapture, info: NodeInfo[], drafts: Element
         else if (area >= vpArea * 0.08) kind = 'overlay';
       }
     }
-    // Sticky/fixed headers are headers, not overlays.
+    // Sticky/fixed headers are headers, not overlays: by tag/role, or a full-width band pinned to the top.
     if (kind === 'overlay' && (n.tag === 'header' || role === 'banner' || n.tag === 'nav')) kind = n.tag === 'nav' ? 'nav' : 'header';
+    if (kind === 'overlay' && n.rect.y <= 4 && n.rect.h <= vp.h * 0.25 && n.rect.w >= vp.w * 0.7) kind = 'header';
     if (kind === 'section') {
       // Only sections that are worth naming: a heading/label and some interactive content.
       const label = regionName(raw, info, n);

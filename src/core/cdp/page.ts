@@ -238,7 +238,8 @@ export class PageSession extends Emitter<PageEvents> {
 
   private markInput(ms: number): void {
     const now = Date.now();
-    this.inputWindows.push({ from: now - 50, to: now + ms + 400 });
+    // Busy pages deliver synthetic input to JS late: keep a generous tail before calling input "foreign".
+    this.inputWindows.push({ from: now - 50, to: now + ms + 3000 });
     this.inputWindows = this.inputWindows.filter((w) => now - w.to < 120_000);
   }
 
@@ -321,7 +322,13 @@ export class PageSession extends Emitter<PageEvents> {
     await this.scrollIntoView(backendNodeId, sessionId);
     let point: Point;
     try {
-      point = await this.clickablePoint(backendNodeId, sessionId);
+      point = await this.clickablePoint(backendNodeId, sessionId).catch(async (e) => {
+        if (!(e instanceof ActionError && e.reason === 'occluded')) throw e;
+        // Fixed headers and cookie bars often cover elements near the viewport edges: centre it and retry.
+        await this.callOn(backendNodeId, sessionId, 'function(){ this.scrollIntoView({block:"center",inline:"center"}); }');
+        await sleep(150);
+        return this.clickablePoint(backendNodeId, sessionId);
+      });
     } catch (e) {
       if (!(opts.force && e instanceof ActionError && e.reason === 'occluded')) throw e;
       const { model } = await this.send<{ model: { content: number[] } }>('DOM.getBoxModel', { backendNodeId }, sessionId);

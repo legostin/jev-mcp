@@ -43,7 +43,7 @@ function validDay(y: number, m: number, d: number): boolean {
  * relative to `refMonth`).
  */
 export function parseDateText(text: string, ref: { year: number; month: number } = defaultRef()): DateParts & { year: number } | null {
-  const t = text.replace(/ /g, ' ').trim();
+  const t = text.replace(/\u00a0/g, ' ').trim();
   let m = t.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
   if (m) {
     const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];

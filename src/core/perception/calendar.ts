@@ -54,10 +54,17 @@ export function parseCalendarCells(model: PageModel, ref: { year: number; month:
     const rest = (e.text ?? '').replace(new RegExp(`^\\s*${dayToken ?? day}\\b`), '');
     cells.push({ ref: e.ref, date, price: parsePrice(rest), disabled: !!e.states.disabled, regionId: e.regionId });
   }
-  // A calendar is a grid of dates: a lone element that mentions a date (a filled date field) is not a cell.
-  const perRegion = new Map<string, number>();
-  for (const c of cells) perRegion.set(c.regionId, (perRegion.get(c.regionId) ?? 0) + 1);
-  return cells.filter((c) => (perRegion.get(c.regionId) ?? 0) >= 7);
+  // A calendar is a dense grid of dates: a filled date field or a list of event dates is not.
+  const byRegion = new Map<string, CalendarCell[]>();
+  for (const c of cells) byRegion.set(c.regionId, [...(byRegion.get(c.regionId) ?? []), c]);
+  const dense = new Set<string>();
+  for (const [id, list] of byRegion) {
+    if (list.length < 7) continue;
+    const times = list.map((c) => Date.parse(c.date)).sort((a, b) => a - b);
+    const spanDays = (times[times.length - 1] - times[0]) / 86_400_000;
+    if (spanDays <= list.length * 2 + 7) dense.add(id);
+  }
+  return cells.filter((c) => dense.has(c.regionId));
 }
 
 function refNow(): { year: number; month: number } {

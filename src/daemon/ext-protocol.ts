@@ -6,6 +6,7 @@ export type ExtToDaemon =
   | { type: 'reply'; id: number; result?: unknown; error?: string }
   | { type: 'event'; tabId: number; sessionId?: string; method: string; params: unknown }
   | { type: 'detached'; tabId: number; reason: string }
+  | { type: 'tab_created'; tabId: number; openerTabId?: number; url: string }
   | { type: 'ui'; id: number; method: string; params?: unknown };
 
 export type DaemonToExt =

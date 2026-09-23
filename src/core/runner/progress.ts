@@ -21,7 +21,7 @@ export function dateRange(p: ParamSpec): { from: string; to: string } | null {
 }
 
 export function normalizeText(s: string): string {
-  return s.toLowerCase().replace(/ё/g, 'е').replace(/[\s ]+/g, ' ').trim();
+  return s.toLowerCase().replace(/ё/g, 'е').replace(/[\s\u00a0]+/g, ' ').trim();
 }
 
 /** Code-side check: does a field already hold the param's value? */

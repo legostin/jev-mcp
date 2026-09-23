@@ -159,7 +159,17 @@ export async function extractResults(
         row[f] = href ?? null;
         continue;
       }
-      row[f] = leaf ? parseField(type, leaf.el.text || leaf.el.name, base, opts.refDate) : null;
+      let value = leaf ? parseField(type, leaf.el.text || leaf.el.name, base, opts.refDate) : null;
+      if ((value === null || value === undefined) && key && type !== 'string') {
+        // Items differ slightly (extra badges shift positions): try leaves of the same kind/tag/class that parse.
+        const baseKey = key.replace(/#\d+$/, '');
+        for (const l of leaves) {
+          if (!l.key.startsWith(`${baseKey}#`) || l === leaf) continue;
+          const v = parseField(type, l.el.text || l.el.name, base, opts.refDate);
+          if (v !== null && v !== undefined) { value = v; break; }
+        }
+      }
+      row[f] = value;
     }
     return row;
   });

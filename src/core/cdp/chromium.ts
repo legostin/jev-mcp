@@ -48,6 +48,7 @@ export class ChromiumDriver implements BrowserDriver {
   private headless: boolean;
   private disconnectListeners = new Set<() => void>();
   private sessions = new Map<string, string>(); // targetId -> sessionId
+  private createdListeners = new Set<(tab: { id: string; openerId?: string; url: string }) => void>();
 
   private constructor(conn: WsCdpConnection, proc: ChildProcess | null, headless: boolean) {
     this.conn = conn;
@@ -58,7 +59,19 @@ export class ChromiumDriver implements BrowserDriver {
       if (method === 'Target.detachedFromTarget') {
         for (const [t, s] of this.sessions) if (s === params.sessionId) this.sessions.delete(t);
       }
+      if (method === 'Target.targetCreated' && params.targetInfo?.type === 'page') {
+        const info = params.targetInfo;
+        for (const l of [...this.createdListeners]) l({ id: info.targetId, openerId: info.openerId, url: info.url });
+      }
     });
+    conn.send('Target.setDiscoverTargets', { discover: true }).catch(() => {});
+  }
+
+  get interactive(): boolean { return !this.headless; }
+
+  onTabCreated(listener: (tab: { id: string; openerId?: string; url: string }) => void): () => void {
+    this.createdListeners.add(listener);
+    return () => this.createdListeners.delete(listener);
   }
 
   /** Reuses a jev Chrome that is still running with this profile, otherwise launches one. */
