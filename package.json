@@ -1,7 +1,39 @@
 {
-  "name": "jev-browser",
+  "name": "jev-mcp",
   "version": "0.1.0",
-  "description": "Browser control for AI agents, driven by JEV (TypeSafe System One) decisions.",
+  "description": "MCP server that lets Claude Code, Codex and other AI agents drive a real Chrome browser with JEV, TypeSafe's fast System One decision model: calibrated confidence, ~100 ms decisions, typed page understanding, human-in-the-loop questions and a debug UI.",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "browser-automation",
+    "ai-agent",
+    "claude-code",
+    "codex",
+    "chrome",
+    "chrome-extension",
+    "chrome-devtools-protocol",
+    "cdp",
+    "headless-chrome",
+    "web-automation",
+    "web-scraping",
+    "jev",
+    "typesafe",
+    "system-one",
+    "openrouter",
+    "llm-tools",
+    "agentic-ai"
+  ],
+  "homepage": "https://github.com/legostin/jev-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/legostin/jev-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/legostin/jev-mcp.git"
+  },
+  "license": "MIT",
+  "author": "legostin",
   "type": "module",
   "private": true,
   "bin": {
