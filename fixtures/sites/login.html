@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sign in — Fixture</title></head>
+<body style="font:15px sans-serif;padding:32px">
+<main>
+  <h1>Sign in</h1>
+  <form id="f" onsubmit="event.preventDefault(); document.getElementById('msg').textContent = (document.getElementById('email').value && document.getElementById('password').value) ? 'Welcome back' : 'Please fill in all fields';">
+    <label for="email">Email address</label><br><input id="email" type="email" autocomplete="username"><br>
+    <label for="password">Password</label><br><input id="password" type="password" autocomplete="current-password"><br>
+    <label><input type="checkbox" id="remember"> Keep me signed in</label><br>
+    <button type="submit">Sign in</button> <a href="#">Forgot password?</a>
+  </form>
+  <p id="msg" role="status"></p>
+</main>
+</body></html>

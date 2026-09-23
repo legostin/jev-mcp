@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Оформление — Avia Fixture</title>
+<style>body{font:15px sans-serif;padding:24px 32px;background:#f1f4f8} form{background:#fff;padding:20px;border-radius:10px;max-width:520px}
+label{display:block;margin:10px 0 4px} input{width:100%;padding:8px} .pay{margin-top:16px;background:#ff6d00;color:#fff;border:0;padding:12px 20px;border-radius:8px;font-size:17px}</style>
+</head><body>
+<h1>Оформление билета</h1>
+<form action="/order/pay" method="post" onsubmit="event.preventDefault(); document.getElementById('done').textContent='Оплачено';">
+  <label for="fn">Имя латиницей</label><input id="fn" autocomplete="given-name">
+  <label for="ln">Фамилия латиницей</label><input id="ln" autocomplete="family-name">
+  <label for="cc">Номер карты</label><input id="cc" autocomplete="cc-number" inputmode="numeric">
+  <label for="exp">Срок действия</label><input id="exp" autocomplete="cc-exp">
+  <button class="pay" type="submit" id="pay">Оплатить <span id="amount"></span></button>
+  <p id="done"></p>
+</form>
+<script>const p=new URLSearchParams(location.search).get('price')||'41230';
+document.getElementById('amount').textContent=Number(p).toLocaleString('ru-RU').replace(/ /g,' ')+' ₸';</script>
+</body></html>

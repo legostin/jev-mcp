@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Результаты поиска — Avia Fixture</title>
+<style>
+  body { margin: 0; font: 15px/1.4 -apple-system, Segoe UI, sans-serif; background: #f1f4f8; }
+  .top { padding: 14px 32px; background: #0a84ff; color: #fff; display: flex; gap: 16px; }
+  .top a { color: #fff; }
+  .wrap { display: grid; grid-template-columns: 240px 1fr; gap: 24px; padding: 24px 32px; }
+  aside { background: #fff; border-radius: 10px; padding: 16px; }
+  aside label { display: block; margin: 6px 0; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .tabs button { flex: 1; padding: 10px; border: 0; background: #fff; border-radius: 8px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: #0a84ff; color: #fff; }
+  .ticket { display: grid; grid-template-columns: 150px 1fr 140px; gap: 12px; background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 10px; }
+  .ticket .price { font-size: 22px; font-weight: 700; }
+  .ticket .times { font-size: 18px; }
+  .ticket .meta { color: #777; font-size: 13px; }
+  .ticket .buy { background: #ff6d00; color: #fff; border: 0; border-radius: 8px; padding: 10px; cursor: pointer; text-align: center; text-decoration: none; }
+  .more { width: 100%; padding: 12px; border: 0; border-radius: 8px; background: #dfe8f5; cursor: pointer; }
+  .summary { font-size: 20px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="top"><a href="flights.html">✈ Avia Fixture</a><span>Поиск билетов</span></div>
+<div class="wrap">
+  <aside>
+    <h4>Пересадки</h4>
+    <label><input type="checkbox" checked> Без пересадок</label>
+    <label><input type="checkbox" checked> 1 пересадка</label>
+    <h4>Авиакомпании</h4>
+    <label><input type="checkbox" checked> Air Astana</label>
+    <label><input type="checkbox" checked> FlyArystan</label>
+    <label><input type="checkbox" checked> Pegasus</label>
+  </aside>
+  <section>
+    <div class="summary" id="summary"></div>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-sort="cheap" aria-selected="false">Самый дешёвый</button>
+      <button role="tab" data-sort="fast" aria-selected="false">Самый быстрый</button>
+      <button role="tab" data-sort="best" aria-selected="true">Лучший</button>
+    </div>
+    <div id="list"></div>
+    <button class="more" id="more" type="button">Показать ещё 10 билетов</button>
+  </section>
+</div>
+<script>
+const MONTHS = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+const q = new URLSearchParams(location.search);
+const from = q.get('from'), to = q.get('to'), date = q.get('date');
+const names = { ALA: 'Алматы', AYT: 'Анталия', NQZ: 'Астана', IST: 'Стамбул', MOW: 'Москва' };
+const [y, m, d] = (date || '2026-10-14').split('-').map(Number);
+document.getElementById('summary').textContent = `${names[from] || from} → ${names[to] || to}, ${d} ${MONTHS[m - 1]}`;
+let page = 0, sort = 'best';
+const fmt = (n) => n.toLocaleString('ru-RU').replace(/ /g, ' ') + ' ₸';
+async function load(reset) {
+  if (reset) { page = 0; document.getElementById('list').innerHTML = ''; }
+  page++;
+  const res = await (await fetch(`/api/flights?from=${from}&to=${to}&date=${date}&page=${page}&sort=${sort}`)).json();
+  const list = document.getElementById('list');
+  for (const f of res.items) {
+    const el = document.createElement('div');
+    el.className = 'ticket';
+    el.innerHTML = `<div><div class="price">${fmt(f.price)}</div><div class="meta">${f.airline}</div></div>
+      <div><div class="times">${f.depart} — ${f.arrive}</div>
+      <div class="meta">${Math.floor(f.durationMin / 60)}ч ${f.durationMin % 60}м в пути · ${f.stops ? '1 пересадка' : 'Прямой'}</div></div>
+      <a class="buy" href="checkout.html?id=${f.id}&price=${f.price}">Выбрать</a>`;
+    list.appendChild(el);
+  }
+  document.getElementById('more').style.display = page * 10 >= res.total ? 'none' : '';
+}
+document.getElementById('more').addEventListener('click', () => load(false));
+for (const b of document.querySelectorAll('.tabs button')) {
+  b.addEventListener('click', () => {
+    for (const x of document.querySelectorAll('.tabs button')) x.setAttribute('aria-selected', String(x === b));
+    sort = b.dataset.sort; load(true);
+  });
+}
+load(true);
+</script>
+</body>
+</html>

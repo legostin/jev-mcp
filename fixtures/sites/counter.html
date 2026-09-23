@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Counter</title></head>
+<body style="font:15px sans-serif;padding:24px">
+<button id="inc">Increment</button> <span id="count">0</span>
+<p><input id="name" placeholder="Your name"> <span id="events">0</span></p>
+<p><select id="color" aria-label="Color"><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option></select></p>
+<p><button id="late">Add item later</button></p>
+<ul id="items"></ul>
+<div style="height:2000px"></div>
+<button id="far">Far away button</button> <span id="far-count">0</span>
+<p><input type="file" id="file"> <span id="file-name"></span></p>
+<script>
+let n = 0, ev = 0, far = 0;
+document.getElementById('inc').addEventListener('click', () => { document.getElementById('count').textContent = String(++n); });
+document.getElementById('name').addEventListener('input', () => { document.getElementById('events').textContent = String(++ev); });
+document.getElementById('far').addEventListener('click', () => { document.getElementById('far-count').textContent = String(++far); });
+document.getElementById('late').addEventListener('click', () => {
+  setTimeout(() => { const li = document.createElement('li'); li.textContent = 'Late item'; document.getElementById('items').appendChild(li); }, 700);
+});
+document.getElementById('file').addEventListener('change', (e) => { document.getElementById('file-name').textContent = e.target.files[0]?.name || ''; });
+</script>
+</body></html>

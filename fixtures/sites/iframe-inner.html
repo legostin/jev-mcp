@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Partner form</title></head>
+<body style="font:14px sans-serif;margin:8px">
+<label for="holder">Cardholder name</label><br><input id="holder"><br>
+<button id="inner-btn" type="button">Continue</button> <span id="inner-out"></span>
+<script>document.getElementById('inner-btn').addEventListener('click', () => {
+  document.getElementById('inner-out').textContent = 'Hello ' + document.getElementById('holder').value; });</script>
+</body></html>

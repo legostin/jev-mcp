@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Promo</title>
+<style>body{font:15px sans-serif;padding:24px}.dlg{position:fixed;inset:20% 30%;background:#fff;border:1px solid #aaa;z-index:50;padding:20px}
+.bd{position:fixed;inset:0;background:#0005;z-index:49}</style></head>
+<body>
+<header><nav><a href="#">Home</a> <a href="#">Shop</a> <a href="#">Contact</a></nav></header>
+<main><h1>Spring sale</h1><button id="shop">Shop now</button><span id="shopped"></span></main>
+<div class="bd"></div>
+<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="t"><h2 id="t">Get 10% off</h2>
+<p>Join our list for a discount.</p><input placeholder="Email"><button id="join">Join</button>
+<button id="close" aria-label="Close">✕</button></div>
+<script>
+document.getElementById('close').addEventListener('click', () => { document.querySelector('.dlg').remove(); document.querySelector('.bd').remove(); });
+document.getElementById('shop').addEventListener('click', () => { document.getElementById('shopped').textContent = 'Shopping'; });
+</script>
+</body></html>

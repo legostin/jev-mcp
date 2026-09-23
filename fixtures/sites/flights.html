@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Дешёвые авиабилеты — Avia Fixture</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.4 -apple-system, Segoe UI, sans-serif; background: #f1f4f8; color: #111; }
+  .top { display: flex; gap: 20px; align-items: center; padding: 14px 32px; background: #0a84ff; color: #fff; }
+  .top a { color: #fff; text-decoration: none; }
+  .top .login { margin-left: auto; }
+  .hero { padding: 40px 32px; background: #0a84ff; }
+  .hero h1 { color: #fff; margin: 0 0 20px; font-size: 32px; }
+  .search { display: flex; gap: 2px; background: #fff; border-radius: 12px; padding: 4px; position: relative; }
+  .fld { position: relative; flex: 1; background: #fff; padding: 8px 12px; min-height: 56px; }
+  .fld input { border: 0; outline: 0; font-size: 17px; width: 100%; padding: 0; margin-top: 2px; }
+  .fld .lbl { font-size: 12px; color: #888; }
+  .date { cursor: pointer; }
+  .swap { width: 36px; border: 0; background: #eef; border-radius: 50%; cursor: pointer; }
+  .go { background: #ff6d00; color: #fff; border: 0; border-radius: 10px; font-size: 18px; padding: 0 28px; cursor: pointer; }
+  .suggest { position: absolute; top: 60px; left: 0; width: 320px; background: #fff; border-radius: 8px; box-shadow: 0 6px 24px #0003;
+             list-style: none; margin: 0; padding: 6px 0; z-index: 30; }
+  .suggest li { padding: 8px 14px; cursor: pointer; }
+  .suggest li[aria-selected="true"], .suggest li:hover { background: #eef4ff; }
+  .suggest .code { float: right; color: #888; }
+  .cal { position: absolute; top: 64px; left: 30%; width: 420px; background: #fff; border-radius: 10px; box-shadow: 0 6px 24px #0003; padding: 12px; z-index: 30; }
+  .cal header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .cal .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .cal .grid button { border: 0; background: #f6f7f9; border-radius: 6px; padding: 4px 0; cursor: pointer; font-size: 13px; }
+  .cal .grid button .p { display: block; font-size: 10px; color: #0a8f3c; }
+  .cal .grid button:disabled { opacity: .35; cursor: default; }
+  .pax { position: absolute; top: 64px; right: 120px; background: #fff; padding: 12px; border-radius: 8px; box-shadow: 0 6px 24px #0003; z-index: 30; }
+  .err { color: #c00; font-size: 13px; margin-top: 6px; min-height: 18px; }
+  main { padding: 24px 32px; }
+  .promo { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .promo article { background: #fff; padding: 16px; border-radius: 10px; }
+  .subscribe { margin-top: 32px; background: #fff; padding: 20px; border-radius: 10px; }
+  .subscribe input { padding: 8px; margin-right: 8px; }
+  footer { padding: 24px 32px; color: #666; }
+  .backdrop { position: fixed; inset: 0; background: #0006; z-index: 100; }
+  .consent { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 460px; background: #fff; border-radius: 12px; padding: 24px; z-index: 101; }
+  .consent button { margin-right: 8px; padding: 8px 14px; }
+</style>
+</head>
+<body>
+<div class="top">
+  <a href="#" class="logo">✈ Avia Fixture</a>
+  <a href="#">Авиабилеты</a><a href="#">Отели</a><a href="#">Туры</a><a href="#">Поддержка</a>
+  <a href="login.html" class="login">Войти</a>
+</div>
+<div class="hero">
+  <h1>Тут покупают дешёвые авиабилеты</h1>
+  <form class="search" id="search" autocomplete="off" novalidate>
+    <div class="fld" id="f-origin">
+      <input id="origin" placeholder="Откуда" data-code="">
+    </div>
+    <button type="button" class="swap" aria-label="Поменять местами">⇄</button>
+    <div class="fld" id="f-dest">
+      <span class="lbl">Куда</span>
+      <input id="dst-9f2c1a" data-code="">
+    </div>
+    <div class="fld date" id="f-date" role="button" tabindex="0">
+      <span class="lbl">Когда</span>
+      <div class="val" id="date-val">Дата</div>
+    </div>
+    <div class="fld date" id="f-return" role="button" tabindex="0">
+      <span class="lbl">Обратно</span>
+      <div class="val">Без обратного</div>
+    </div>
+    <div class="fld" id="f-pax" role="button" tabindex="0">
+      <span class="lbl">Пассажиры</span>
+      <div class="val" id="pax-val">1 пассажир, эконом</div>
+    </div>
+    <button type="submit" class="go">Найти билеты</button>
+  </form>
+  <div class="err" id="err"></div>
+</div>
+<main>
+  <h2>Популярные направления</h2>
+  <div class="promo">
+    <article><h3>Стамбул</h3><p>от 52 000 ₸</p><a href="#">Смотреть</a></article>
+    <article><h3>Дубай</h3><p>от 61 500 ₸</p><a href="#">Смотреть</a></article>
+    <article><h3>Москва</h3><p>от 45 200 ₸</p><a href="#">Смотреть</a></article>
+  </div>
+  <section class="subscribe">
+    <h3>Подпишитесь на рассылку низких цен</h3>
+    <input placeholder="Город" id="sub-city"><input placeholder="Email" id="sub-email" type="email">
+    <button type="button" id="sub-btn">Подписаться</button>
+  </section>
+</main>
+<footer>© Avia Fixture. <a href="#">Правила</a> · <a href="#">Конфиденциальность</a></footer>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const MONTHS = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+const MONTHS_NOM = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+const state = { date: null, month: '2026-09', pax: 1 };
+let openPopup = null;
+function closePopup() { if (openPopup) { openPopup.remove(); openPopup = null; } }
+document.addEventListener('click', (e) => { if (openPopup && !openPopup.contains(e.target) && !e.target.closest('.fld')) closePopup(); });
+
+// City autocomplete: typing fetches suggestions; picking one stores the IATA code.
+function wireCity(input, host) {
+  let timer = null;
+  input.addEventListener('input', () => {
+    input.dataset.code = '';
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const items = await (await fetch('/api/suggest?q=' + encodeURIComponent(input.value))).json();
+      closePopup();
+      if (!items.length) return;
+      const ul = document.createElement('ul');
+      ul.className = 'suggest'; ul.setAttribute('role', 'listbox');
+      for (const c of items) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.innerHTML = `${c.name}, ${c.country} <span class="code">${c.code}</span>`;
+        li.addEventListener('click', () => { input.value = c.name; input.dataset.code = c.code; closePopup(); });
+        ul.appendChild(li);
+      }
+      host.appendChild(ul); openPopup = ul;
+    }, 120);
+  });
+}
+wireCity($('#origin'), $('#f-origin'));
+wireCity($('#dst-9f2c1a'), $('#f-dest'));
+$('.swap').addEventListener('click', () => {
+  const a = $('#origin'), b = $('#dst-9f2c1a');
+  [a.value, b.value] = [b.value, a.value]; [a.dataset.code, b.dataset.code] = [b.dataset.code, a.dataset.code];
+});
+
+// Calendar with the cheapest fare per day, like aviasales' low-price calendar.
+async function renderCalendar(host) {
+  closePopup();
+  const box = document.createElement('div');
+  box.className = 'cal';
+  const [y, m] = state.month.split('-').map(Number);
+  box.innerHTML = `<header><button type="button" class="prev" aria-label="Предыдущий месяц">‹</button>
+    <strong class="title">${MONTHS_NOM[m - 1]} ${y}</strong>
+    <button type="button" class="next" aria-label="Следующий месяц">›</button></header>
+    <div class="grid"></div>`;
+  host.appendChild(box); openPopup = box;
+  const from = $('#origin').dataset.code, to = $('#dst-9f2c1a').dataset.code;
+  const prices = from && to ? await (await fetch(`/api/calendar?from=${from}&to=${to}&month=${state.month}`)).json() : {};
+  const grid = box.querySelector('.grid');
+  const days = new Date(y, m, 0).getDate();
+  const offset = (new Date(y, m - 1, 1).getDay() + 6) % 7;
+  for (let i = 0; i < offset; i++) grid.appendChild(document.createElement('span'));
+  for (let d = 1; d <= days; d++) {
+    const iso = `${state.month}-${String(d).padStart(2, '0')}`;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('aria-label', `${d} ${MONTHS[m - 1]} ${y}`);
+    b.dataset.date = iso;
+    const p = prices[iso];
+    b.innerHTML = `${d}${p ? `<span class="p">${p.toLocaleString('ru-RU').replace(/ /g, ' ')}</span>` : ''}`;
+    if (iso < '2026-09-23') b.disabled = true;
+    b.addEventListener('click', () => {
+      state.date = iso;
+      $('#date-val').textContent = `${d} ${MONTHS[m - 1]}`;
+      closePopup();
+    });
+    grid.appendChild(b);
+  }
+  box.querySelector('.prev').addEventListener('click', (e) => { e.stopPropagation(); shiftMonth(-1, host); });
+  box.querySelector('.next').addEventListener('click', (e) => { e.stopPropagation(); shiftMonth(1, host); });
+}
+function shiftMonth(delta, host) {
+  const [y, m] = state.month.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  state.month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  renderCalendar(host);
+}
+$('#f-date').addEventListener('click', (e) => { if (!e.target.closest('.cal')) renderCalendar($('#f-date')); });
+$('#f-return').addEventListener('click', () => { closePopup(); });
+$('#f-pax').addEventListener('click', (e) => {
+  if (e.target.closest('.pax')) return;
+  closePopup();
+  const box = document.createElement('div');
+  box.className = 'pax';
+  box.innerHTML = `Взрослые <button type="button" aria-label="Уменьшить">−</button> <b>${state.pax}</b>
+    <button type="button" aria-label="Увеличить">+</button>`;
+  $('#f-pax').appendChild(box); openPopup = box;
+});
+
+$('#search').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const from = $('#origin').dataset.code, to = $('#dst-9f2c1a').dataset.code;
+  const err = [];
+  if (!from) err.push('Выберите город отправления из списка');
+  if (!to) err.push('Выберите город прибытия из списка');
+  if (!state.date) err.push('Укажите дату вылета');
+  $('#err').textContent = err.join('. ');
+  if (err.length) return;
+  location.href = `results.html?from=${from}&to=${to}&date=${state.date}`;
+});
+
+// Consent wall shortly after load.
+setTimeout(() => {
+  if (sessionStorage.getItem('consent')) return;
+  const bd = document.createElement('div'); bd.className = 'backdrop';
+  const dlg = document.createElement('div'); dlg.className = 'consent';
+  dlg.innerHTML = `<h3>Мы используем cookies</h3><p>Файлы cookie помогают сделать сайт удобнее. Продолжая, вы соглашаетесь с политикой.</p>
+    <button type="button" id="c-ok">Принять все</button><button type="button" id="c-cfg">Настроить</button>`;
+  document.body.append(bd, dlg);
+  dlg.querySelector('#c-ok').addEventListener('click', () => { sessionStorage.setItem('consent', '1'); bd.remove(); dlg.remove(); });
+}, 300);
+</script>
+</body>
+</html>
