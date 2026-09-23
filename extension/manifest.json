@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "JEV Browser",
+  "description": "Lets the local jev daemon drive this Chrome with JEV decisions. Shows tasks, questions and controls in the side panel.",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv0iNA/ABiByC2MniIAZmlZlzcNwVnNft80ztNmkAfidDjXPJuN3Tb8CzaNwEAqETi6pC/7lSqd4Az1X4F/fArAniSGyRSxdDuG7zCwbHN7/I9xqOppjtcN+tGRDRlKu0vbmWxNq5g5gtIO+2+4RyYbOTVI5ZakKQVLjbSRuwAUnrWwpwOa1vOeS1e6z08HfEjeHrxvh+sDJPXBh7+jCK020njxEsEofrBw7GnX3G12Ym7dcXOWGkkPYd8pUokoJrly1jVqktlZyejpMV8rpWQEHrlrFyDHiMRvOQEe6231kmhScvwxpzQH35oklrKYK5US8fSyPVWPiKCMMV/YyixQIDAQAB",
+  "minimum_chrome_version": "125",
+  "permissions": ["debugger", "tabs", "storage", "sidePanel", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "worker.js", "type": "module" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "action": { "default_title": "JEV Browser" },
+  "icons": { "128": "icon128.png" }
+}

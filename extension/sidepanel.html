@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JEV Browser</title>
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+<header>
+  <strong>JEV Browser</strong>
+  <span id="status" class="pill">…</span>
+</header>
+<section id="pair" hidden>
+  <p>Pair this browser with the local jev daemon. Run <code>jev pair</code> in a terminal and enter the code:</p>
+  <form id="pair-form"><input id="code" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="off"><button>Pair</button></form>
+  <p class="muted" id="pair-error"></p>
+</section>
+<section id="offline" hidden>
+  <p>The jev daemon is not reachable. It starts automatically when an agent uses jev, or run <code>jev daemon</code>.</p>
+  <details><summary>Port</summary><form id="port-form"><input id="port" type="number" min="1024" max="65535"><button>Save</button></form></details>
+</section>
+<main id="main" hidden>
+  <div id="empty" class="muted">No tasks yet. Tasks started by your agent appear here.</div>
+  <div id="tasks"></div>
+</main>
+<footer class="muted"><a href="#" id="ui-link">Open debug UI</a> · <a href="#" id="forget">Unpair</a></footer>
+<template id="task-tpl">
+  <article class="task">
+    <div class="row"><span class="state"></span><span class="goal"></span></div>
+    <div class="muted step"></div>
+    <div class="question" hidden>
+      <div class="q-summary"></div>
+      <div class="cands"></div>
+      <form class="hint-form"><input class="hint" placeholder="Hint for JEV (English)"><button>Send hint</button></form>
+      <div class="row q-actions"><button data-a="continue">Continue</button><button data-a="skip">Skip</button><button data-a="abort" class="danger">Abort</button></div>
+    </div>
+    <label class="slider muted">Act at confidence ≥ <b class="act-val"></b>
+      <input type="range" class="act" min="0" max="1" step="0.05"></label>
+    <div class="row controls">
+      <button data-c="pause">Pause</button><button data-c="takeover">Take over</button><button data-c="resume">Resume</button><button data-c="cancel" class="danger">Cancel</button>
+      <label class="muted"><input type="checkbox" class="hl"> Highlight</label>
+    </div>
+  </article>
+</template>
+<script type="module" src="sidepanel.js"></script>
+</body>
+</html>

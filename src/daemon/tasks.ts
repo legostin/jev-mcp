@@ -43,6 +43,8 @@ export function questionLine(q: Escalation): string {
 export class TaskManager {
   readonly tasks = new Map<string, Task>();
   private waiters = new Set<Waiter>();
+  /** Extra subscribers (debug UI SSE, extension side panel). */
+  readonly listeners: Array<(ev: TaskEvent) => void> = [];
   private readonly ctx: DaemonContext;
   private readonly rpc: RpcServer;
   private readonly memory?: MemoryStore;
@@ -66,6 +68,7 @@ export class TaskManager {
     const ev: TaskEvent = { type, task_id: task.id, session: task.sessionId, at: Date.now(), payload };
     const notifyChannel = this.ctx.getConfig().notify.channel;
     this.rpc.broadcast('task.event', { ...ev, channel: notifyChannel }, (c) => c.sessionId === task.sessionId || c.client === 'ui');
+    for (const l of this.listeners) { try { l(ev); } catch { /* isolated */ } }
     for (const w of [...this.waiters]) {
       if (w.taskId ? w.taskId !== task.id : w.sessionId !== task.sessionId) continue;
       const match = w.until === 'any' ? type !== 'step' : w.until === 'question' ? type === 'question' || type === 'done' : type === 'done';
