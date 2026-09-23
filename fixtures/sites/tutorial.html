@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Аренда квартир — объявления</title>
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  main { padding: 16px; max-width: 900px; }
+  .card { border-bottom: 1px solid #ddd; padding: 16px 0; position: relative; }
+  .note { padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; background: #fff; }
+  /* A tutorial: an empty dimmer over the whole page and a tooltip pointing at the first card. */
+  .tutorial__cover { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 100; }
+  .tutorial__tip { position: absolute; left: 180px; top: 150px; width: 320px; background: #fff; padding: 16px; border-radius: 12px; z-index: 101; }
+  .tutorial__close { position: absolute; right: 10px; top: 10px; border: 0; background: none; font-size: 20px; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Аренда квартир</h1>
+  <p>Сортировать: <a href="?sort=new">Новые</a> · <a href="?sort=cheap" id="cheap">Дешевые</a> · <a href="?sort=exp">Дорогие</a></p>
+  <section id="list">
+    <div class="card"><a href="/a/1">2-комнатная квартира · 50 м²</a> <b>500 000 ₸</b> <button class="note">Оставить заметку</button></div>
+    <div class="card"><a href="/a/2">2-комнатная квартира · 48 м²</a> <b>360 000 ₸</b> <button class="note">Оставить заметку</button></div>
+    <div class="card"><a href="/a/3">2-комнатная квартира · 60 м²</a> <b>420 000 ₸</b> <button class="note">Оставить заметку</button></div>
+  </section>
+</main>
+<div id="overlay-tutorial" class="tutorial__cover"></div>
+<div class="tutorial__tip" id="tip">
+  <button class="tutorial__close" id="tip-close"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M1 1l12 12M13 1L1 13" stroke="#333"/></svg></button>
+  <h3>Оставить заметку</h3>
+  <p>Объявления с заметками хранятся в Избранном</p>
+</div>
+<script>
+  document.getElementById('tip-close').onclick = () => { document.getElementById('overlay-tutorial').remove(); document.getElementById('tip').remove(); };
+</script>
+</body>
+</html>

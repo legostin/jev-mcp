@@ -62,3 +62,14 @@ describe('value labels', () => {
     for (const [name, want, expected] of cases) expect(isValueLabel(name, want), name).toBe(expected);
   });
 });
+
+describe('dropdown triggers', () => {
+  it('show a value only when it is the current selection', async () => {
+    const { showsValue } = await import('../../src/core/runner/progress.ts');
+    const el = (name: string, value?: string) => ({ name, value, text: name } as any);
+    expect(showsValue(el('Караганда ▾'), 'караганда')).toBe(true);
+    expect(showsValue(el('Город: Алматы'), 'алматы')).toBe(true);
+    expect(showsValue(el('Алматы Алматы Астана Актобе Караганда Актау Кокшетау Талдыкорган Атырау Семей'), 'алматы')).toBe(false);
+    expect(showsValue(el('Где искать'), 'павлодар')).toBe(false);
+  });
+});

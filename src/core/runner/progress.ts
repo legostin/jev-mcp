@@ -1,5 +1,6 @@
 import type { ParamSpec } from '../questions/state.ts';
 import type { ElementNode, PageModel } from '../perception/types.ts';
+import { isValueLabel as isValueLabelNorm } from '../questions/lexical.ts';
 
 export type ParamKind = 'text' | 'date' | 'boolean' | 'multi';
 
@@ -24,6 +25,16 @@ export { isValueLabel } from '../questions/lexical.ts';
 
 export function normalizeText(s: string): string {
   return s.toLowerCase().replace(/ё/g, 'е').replace(/[\s\u00a0]+/g, ' ').trim();
+}
+
+/**
+ * Does a dropdown trigger display the value as its current selection? "Караганда ▾" does; a widget whose text lists
+ * every city ("Алматы Астана Актобе …") does not, even though it contains the value.
+ */
+export function showsValue(el: ElementNode, want: string): boolean {
+  const shown = normalizeText(el.name || el.text || '');
+  if (isValueLabelNorm(shown, want) || normalizeText(el.value ?? '') === want) return true;
+  return shown.includes(want) && shown.length <= want.length + 24;
 }
 
 /** Code-side check: does a field already hold the param's value? */

@@ -35,6 +35,15 @@ describe('perception', () => {
     expect(find(m, (e) => /Hidden decorative/.test(e.name))).toBeUndefined();
   });
 
+  it('treats a tooltip on an empty dimmer as a blocking dialog', async () => {
+    const page = await h.open('tutorial.html');
+    const m = await observePage(page);
+    const cheap = find(m, (e) => e.name === 'Дешевые')!;
+    expect(cheap.occluded).toBe(true);
+    const tip = m.regions.find((r) => r.refs.includes(find(m, (e) => e.attrs.id === 'tip-close')!.ref))!;
+    expect(tip).toMatchObject({ kind: 'dialog', blocking: true });
+  });
+
   it('detects a blocking consent overlay and covered controls, then the popup after typing', async () => {
     const page = await h.open('flights.html');
     await sleep(500);

@@ -24,7 +24,7 @@ import { inRange } from '../extract/dates.ts';
 import { deterministicRisk, domainAllowed } from '../safety/rules.ts';
 import { maskSecrets, secretValues } from '../safety/secrets.ts';
 import { thresholdsFor, hostOf } from './thresholds.ts';
-import { dateRange, fieldHoldsValue, isValueLabel, normalizeText, paramKind, requiredEmptyFields } from './progress.ts';
+import { dateRange, fieldHoldsValue, isValueLabel, normalizeText, paramKind, requiredEmptyFields, showsValue } from './progress.ts';
 import { Emitter } from '../util/events.ts';
 import { newId } from '../util/ids.ts';
 import { logger } from '../util/log.ts';
@@ -932,7 +932,16 @@ export class Task extends Emitter<TaskEvents> {
   }
 
   private async click(el: ElementNode): Promise<void> {
-    await (await this.page()).click(el.backendNodeId, { sessionId: el.frameSessionId });
+    const page = await this.page();
+    try {
+      await page.click(el.backendNodeId, { sessionId: el.frameSessionId });
+    } catch (e) {
+      // Something we did not see as a layer covers the target (tutorial dimmers, tooltips): Escape usually closes it.
+      if ((e as { reason?: string }).reason !== 'occluded') throw e;
+      await page.press('Escape');
+      await this.settle();
+      await page.click(el.backendNodeId, { sessionId: el.frameSessionId });
+    }
   }
 
   private regionVisible(model: Model, r: Region): boolean {
@@ -1072,7 +1081,7 @@ export class Task extends Emitter<TaskEvents> {
       return { outcome: 'ok', note: `pressed ${trigger.ref} "${trigger.name}" for ${k}`, action: { type: 'click', ref: trigger.ref, param: k } };
     }
     // A dropdown trigger that already shows the value ("Караганда ▾" instead of "Где искать ▾").
-    if ((trigger.kind === 'button' || trigger.kind === 'clickable') && normalizeText(trigger.text ?? trigger.name).includes(want)) {
+    if ((trigger.kind === 'button' || trigger.kind === 'clickable') && showsValue(trigger, want)) {
       this.status[k] = 'done';
       return { outcome: 'ok', note: `${k} already set in ${trigger.ref} "${trigger.name}"` };
     }

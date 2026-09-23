@@ -123,6 +123,8 @@ export function buildPageModel(raw: RawCapture, prev?: PageModel & Partial<Model
   // modal when it is a dialog, covers the viewport centre or a large part of it, or sits on a backdrop. Thin bars
   // (cookie strips, sticky promos) are not blocking: clicks scroll targets clear of them.
   const layered = regionDrafts.filter((rd) => rd.kind === 'overlay' || rd.kind === 'dialog');
+  // Popups count only when they sit on a backdrop (a tutorial tooltip over a dimmer is modal).
+  const popups = regionDrafts.filter((rd) => rd.kind === 'popup');
   const vw = raw.viewport.w;
   const vh = raw.viewport.h;
   const modalLike = (rd: RegionDraft, viaBackdrop: boolean) => {
@@ -136,15 +138,19 @@ export function buildPageModel(raw: RawCapture, prev?: PageModel & Partial<Model
     const occ = d.occluderIdx;
     let owner = layered.find((rd) => rd.anchor === occ || isDescendant(info, rd.anchor, occ));
     let viaBackdrop = false;
-    if (!owner && layered.length) {
-      // A backdrop sibling: attribute to the top-most modal layer, if the occluder really is a large backdrop.
+    if (!owner && (layered.length || popups.length)) {
+      // A backdrop sibling: attribute to the top-most layer, if the occluder really is a large backdrop.
       const o = raw.nodes[occ];
       if (o.rect && o.rect.w * o.rect.h >= vw * vh * 0.5) {
-        owner = [...layered].sort((a, b) => b.paintOrder - a.paintOrder)[0];
+        owner = [...layered, ...popups].sort((a, b) => b.paintOrder - a.paintOrder)[0];
         viaBackdrop = true;
       }
     }
-    if (owner && !isDescendant(info, owner.anchor, d.idx) && modalLike(owner, viaBackdrop)) draftRegion.get(owner)!.blocking = true;
+    if (owner && !isDescendant(info, owner.anchor, d.idx) && modalLike(owner, viaBackdrop)) {
+      const region = draftRegion.get(owner)!;
+      region.blocking = true;
+      if (region.kind === 'popup') region.kind = 'dialog';
+    }
   }
 
   const focused = drafts.find((d) => d.states.focused);
