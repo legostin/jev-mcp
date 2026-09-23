@@ -81,22 +81,51 @@ describe('groundByIntent', () => {
   });
 
   it('reranks mid-confidence picks and acts when both looks agree', async () => {
-    const jev = createScriptedClient((req, n) => {
-      if (n === 1) return { pick: choice({ e1: 0.6, e2: 0.35, none: 0.05 }, 0.6), exists: noulAnswer(0.9) } as Record<string, Answer>;
-      return { pick: choice({ e1: 0.7, e2: 0.3, none: 0 }, 0.7), fit_e1: noulAnswer(0.85), fit_e2: noulAnswer(0.3) } as Record<string, Answer>;
-    });
+    const jev = createScriptedClient((req, n) => (n === 1
+      ? { pick: choice({ e1: 0.6, e2: 0.35, none: 0.05 }, 0.6), exists: noulAnswer(0.9) }
+      : { pick: choice({ e1: 0.7, e2: 0.3, none: 0 }, 0.7) }) as Record<string, Answer>);
     const res = await groundByIntent({ jev }, model([el('e1', 'City'), el('e2', 'City')]), { target: 'departure city' }, th, gctx);
     expect(res).toMatchObject({ ref: 'e1', decision: 'act', stage: 'rerank' });
     expect(jev.requests[1].state).toHaveProperty('candidates.e1');
+    expect(Object.keys(jev.requests[1].questions)).toEqual(['pick']);
   });
 
-  it('escalates when the second look disagrees', async () => {
+  it('escalates a near tie when the step does not allow trials', async () => {
     const jev = createScriptedClient((req, n) => (n === 1
       ? { pick: choice({ e1: 0.55, e2: 0.45, none: 0 }, 0.6), exists: noulAnswer(0.9) }
-      : { pick: choice({ e1: 0.4, e2: 0.6, none: 0 }, 0.6), fit_e1: noulAnswer(0.5), fit_e2: noulAnswer(0.5) }) as Record<string, Answer>);
+      : { pick: choice({ e1: 0.4, e2: 0.6, none: 0 }, 0.6) }) as Record<string, Answer>);
     const res = await groundByIntent({ jev }, model([el('e1', 'City'), el('e2', 'City')]), { target: 'departure city' }, th, gctx);
     expect(res.decision).toBe('escalate');
-    expect(res.candidates.map((c) => c.ref)).toEqual(['e2', 'e1']);
+    expect(res.ranked.map((c) => c.ref)).toEqual(['e2', 'e1']);
+  });
+
+  it('fuses both looks instead of letting the second overwrite the first', async () => {
+    const jev = createScriptedClient((req, n) => (n === 1
+      ? { pick: choice({ e1: 0.55, e2: 0.05, none: 0.4 }, 0.53), exists: noulAnswer(0.6) }
+      : { pick: choice({ e1: 0.24, e2: 0.49, none: 0.27 }, 0.23) }) as Record<string, Answer>);
+    const res = await groundByIntent({ jev }, model([el('e1', 'Павлодар', 'button'), el('e2', 'Где искать', 'button')]), { target: 'city', trial: true }, th, gctx);
+    expect(res.ranked[0].ref).toBe('e1');
+    expect(res).toMatchObject({ ref: 'e1', decision: 'try' });
+  });
+
+  it('does not try below the floor or when trials are off', async () => {
+    const answers = (req: unknown, n: number) => (n === 1
+      ? { pick: choice({ e1: 0.2, e2: 0.2, e3: 0.2, none: 0.4 }, 0.2), exists: noulAnswer(0.6) }
+      : { pick: choice({ e1: 0.3, e2: 0.25, e3: 0.25, none: 0.2 }, 0.1) }) as Record<string, Answer>;
+    const els = [el('e1', 'A', 'button'), el('e2', 'B', 'button'), el('e3', 'C', 'button')];
+    const low = await groundByIntent({ jev: createScriptedClient(answers) }, model(els), { target: 'x', trial: true }, resolveThresholds({ task: { trial: { floor: 0.4 } } }), gctx);
+    expect(low.decision).toBe('escalate');
+    const off = await groundByIntent({ jev: createScriptedClient(answers) }, model(els), { target: 'x', trial: true }, resolveThresholds({ task: { preset: 'cautious' } }), gctx);
+    expect(off.decision).toBe('escalate');
+  });
+
+  it('skips excluded signatures and puts the step card into the state', async () => {
+    const jev = createScriptedClient(() => ({ pick: choice({ e2: 0.95, none: 0.05 }, 0.93), exists: noulAnswer(0.97) }));
+    const res = await groundByIntent({ jev }, model([el('e1', 'A'), el('e2', 'B')]), { target: 'x', exclude: ['e1'] }, th,
+      { ...gctx, step: { kind: 'fill_param', do: 'set the model to "Camry"', param: { key: 'model', about: 'model', value: 'Camry' } } });
+    expect(Object.keys((jev.requests[0].questions.pick as any).criteria)).toEqual(['e2', 'none']);
+    expect((jev.requests[0].state as any).step).toEqual({ do: 'set the model to "Camry"', about: 'model', value: 'Camry' });
+    expect(res.ref).toBe('e2');
   });
 
   it('narrows large pages by region first', async () => {

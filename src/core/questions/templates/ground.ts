@@ -1,10 +1,12 @@
 import type { Question, Json } from '../../jev/types.ts';
 import type { ElementKind, ElementNode, PageModel } from '../../perception/types.ts';
 import type { Thresholds } from '../../config/thresholds.ts';
-import { describeElement, regionLines, renderElement } from '../../perception/render.ts';
+import { describeElement, regionLines, renderCandidate } from '../../perception/render.ts';
 import { buildState, type ParamSpec } from '../state.ts';
 import { runQuestions, choiceOf, noulOf, type QuestionContext } from '../run.ts';
 import { gateChoice, gateNoul, topCandidates } from '../../decide/gating.ts';
+import { fuse } from '../../decide/fuse.ts';
+import type { StepCard } from '../step.ts';
 import { lexicalScore, tokens } from '../lexical.ts';
 
 export interface Intent {
@@ -30,14 +32,19 @@ export interface GroundResult {
   confidence: number;
   exists: number;
   candidates: GroundCandidate[];
+  /** Candidates by final probability (fused over both looks when there was a second one). */
+  ranked: GroundCandidate[];
   stage: 'direct' | 'region' | 'rerank' | 'none';
-  decision: 'act' | 'escalate' | 'none';
+  /** `try`: a reversible step may act on `ranked[0]` and verify, instead of asking. */
+  decision: 'act' | 'try' | 'escalate' | 'none';
   callIds: string[];
   costUsd: number;
 }
 
 export interface GroundContext {
   goal?: string;
+  /** The step being done; with it, questions carry the step's param and value instead of every param. */
+  step?: StepCard;
   params?: Record<string, ParamSpec>;
   hints?: string[];
   budgetTokens: number;
@@ -69,6 +76,7 @@ export function candidateElements(model: PageModel, intent: Intent): ElementNode
     if ((e.rect.w < 6 || e.rect.h < 6) && e.kind !== 'checkbox' && e.kind !== 'radio') continue;
     if (e.states.disabled && intent.action !== 'read') continue;
     if (regionIds && !regionIds.has(e.regionId)) continue;
+    if (intent.exclude?.includes(e.sig)) continue;
     if (intent.allowOccluded === false && e.occluded) continue;
     out.push(e);
   }
@@ -102,7 +110,8 @@ export async function groundByIntent(
   const callIds: string[] = [];
   let cost = 0;
   const all = candidateElements(model, intent);
-  const empty: GroundResult = { ref: null, confidence: 1, exists: 0, candidates: [], stage: 'none', decision: 'none', callIds, costUsd: 0 };
+  const empty: GroundResult = { ref: null, confidence: 1, exists: 0, candidates: [], ranked: [], stage: 'none', decision: 'none', callIds, costUsd: 0 };
+  const ctxParts = { goal: gctx.goal, step: gctx.step, params: gctx.params, hints: gctx.hints, intent: intentState(intent) };
   if (!all.length) return empty;
   const q = tokens(`${intent.target} ${gctx.goal ?? ''}`);
   const scored = all
@@ -124,7 +133,7 @@ export async function groundByIntent(
     const criteria: Record<string, Json | null> = {};
     for (const id of Object.keys(regionsDesc)) criteria[id] = null;
     criteria.none = 'No region in `page.regions` contains `intent.target`.';
-    const state = buildState({ goal: gctx.goal, params: gctx.params, hints: gctx.hints, intent: intentState(intent), page: { url: model.url, title: model.title, regions: regionsDesc } }, gctx.budgetTokens);
+    const state = buildState({ ...ctxParts, page: { url: model.url, title: model.title, regions: regionsDesc } }, gctx.budgetTokens);
     const res = await runQuestions(ctx, {
       template: 'ground.region', state,
       questions: { region: { type: 'choice', instructions: 'Which region in `page.regions` contains `intent.target`?', criteria } },
@@ -147,7 +156,7 @@ export async function groundByIntent(
   const refs = pool.map((e) => e.ref);
   const elements: Record<string, string> = {};
   for (const e of pool) elements[e.ref] = describeElement(e, { pageUrl: model.url, region: true });
-  const state = buildState({ goal: gctx.goal, params: gctx.params, hints: gctx.hints, intent: intentState(intent), page: { url: model.url, title: model.title, elements } }, gctx.budgetTokens);
+  const state = buildState({ ...ctxParts, page: { url: model.url, title: model.title, elements } }, gctx.budgetTokens);
   // The state builder may have trimmed elements to fit the budget; only ask about what JEV can see.
   const visibleRefs = Object.keys(((state as Record<string, Json>).page as Record<string, Json>).elements as Record<string, string>);
   const res = await runQuestions(ctx, { template: 'ground.element', state, questions: elementQuestions(visibleRefs.length >= 1 ? visibleRefs : refs) });
@@ -155,7 +164,8 @@ export async function groundByIntent(
   const pick = choiceOf(res.answers, 'pick');
   const exists = noulOf(res.answers, 'exists');
   const candidates = topCandidates(pick, 5, ['none']).map((c) => ({ ref: c.key, p: c.p, desc: elements[c.key] ?? '' }));
-  const base = { confidence: pick.confidence, exists, candidates, stage, callIds, costUsd: cost };
+  const base = { confidence: pick.confidence, exists, candidates, ranked: candidates, stage, callIds, costUsd: cost };
+  const trial = !!intent.trial && th.trial.enabled;
 
   if (pick.choice === 'none' || gateNoul(exists, th.ground.noul) === 'no') {
     const clearlyAbsent = gateNoul(exists, th.ground.noul) === 'no' || gateChoice(pick, th.ground.choice) === 'act';
@@ -164,42 +174,46 @@ export async function groundByIntent(
   const gate = gateChoice(pick, th.ground.choice);
   if (gate === 'act') return { ...base, ref: pick.choice, decision: 'act' };
 
-  // Second look: full details of the top candidates, a relative choice plus an absolute fit check per candidate.
+  // Second look: the top candidates as compact cards (with the row they sit in).
   const top = candidates.filter((c) => c.p >= 0.02).slice(0, 3);
   if (top.length < 2) {
-    // A single plausible candidate: check it on its own (full details, absolute fit) instead of comparing.
+    // A single plausible candidate: check it on its own (absolute fit) instead of comparing.
     const only = pick.choice;
-    const fitState = buildState({ goal: gctx.goal, params: gctx.params, hints: gctx.hints, intent: intentState(intent), candidates: { [only]: renderElement(model, only) } }, gctx.budgetTokens);
+    const fitState = buildState({ ...ctxParts, candidates: { [only]: renderCandidate(model, only) } }, gctx.budgetTokens);
     const fit = await runQuestions(ctx, {
       template: 'ground.rerank', state: fitState,
       questions: { [`fit_${only}`]: { type: 'noul', instructions: `Is \`candidates.${only}\` \`intent.target\`?` } },
     });
     callIds.push(fit.callId); cost += fit.costUsd;
     const verdict = gateNoul(noulOf(fit.answers, `fit_${only}`), th.ground.noul);
-    const decision = verdict === 'yes' || (verdict === 'unsure' && gate === 'uncertain') ? 'act' : 'escalate';
+    const decision = verdict === 'yes' || (verdict === 'unsure' && gate === 'uncertain') ? 'act'
+      : trial && verdict !== 'no' && (pick.probabilities[only] ?? 0) >= th.trial.floor ? 'try' : 'escalate';
     return { ...base, ref: only, stage: 'rerank', decision, callIds, costUsd: cost };
   }
   const details: Record<string, string> = {};
-  for (const c of top) details[c.ref] = renderElement(model, c.ref);
+  for (const c of top) details[c.ref] = renderCandidate(model, c.ref);
   const rrCriteria: Record<string, Json | null> = {};
   for (const c of top) rrCriteria[c.ref] = null;
   rrCriteria.none = 'None of `candidates` is `intent.target`.';
-  const rrQuestions: Record<string, Question> = {
-    pick: { type: 'choice', instructions: 'Which of `candidates` is `intent.target`?', criteria: rrCriteria },
-  };
-  for (const c of top) rrQuestions[`fit_${c.ref}`] = { type: 'noul', instructions: `Is \`candidates.${c.ref}\` \`intent.target\`?` };
-  const rrState = buildState({ goal: gctx.goal, params: gctx.params, hints: gctx.hints, intent: intentState(intent), candidates: details }, gctx.budgetTokens);
-  const rr = await runQuestions(ctx, { template: 'ground.rerank', state: rrState, questions: rrQuestions });
+  const rrState = buildState({ ...ctxParts, candidates: details }, gctx.budgetTokens);
+  const rr = await runQuestions(ctx, {
+    template: 'ground.rerank', state: rrState,
+    questions: { pick: { type: 'choice', instructions: 'Which of `candidates` is `intent.target`?', criteria: rrCriteria } },
+  });
   callIds.push(rr.callId); cost += rr.costUsd;
   const rrPick = choiceOf(rr.answers, 'pick');
-  const fits = Object.fromEntries(top.map((c) => [c.ref, noulOf(rr.answers, `fit_${c.ref}`)]));
-  const rrGate = gateChoice(rrPick, th.ground.choice);
-  const agree = rrPick.choice === pick.choice;
-  const fitOk = rrPick.choice !== 'none' && gateNoul(fits[rrPick.choice] ?? 0, th.ground.noul) !== 'no';
-  const rrCandidates = top.map((c) => ({ ...c, p: rrPick.probabilities[c.ref] ?? c.p })).sort((a, b) => b.p - a.p);
-  const result = { ...base, confidence: rrPick.confidence, candidates: rrCandidates, stage: 'rerank' as const, callIds, costUsd: cost };
-  if (rrPick.choice === 'none') return { ...result, ref: null, decision: 'escalate' };
-  // Act when the second look is confident, or when both looks agree above the escalate bar.
-  if (fitOk && (rrGate === 'act' || (agree && rrGate === 'uncertain'))) return { ...result, ref: rrPick.choice, decision: 'act' };
-  return { ...result, ref: rrPick.choice, decision: 'escalate' };
+  // Both looks are evidence: average them over the same options instead of taking the last one.
+  const keys = [...top.map((c) => c.ref), 'none'];
+  const fused = fuse(pick.probabilities, rrPick.probabilities, keys);
+  const ranked = top.map((c) => ({ ...c, desc: details[c.ref] ?? c.desc, p: fused[c.ref] })).sort((a, b) => b.p - a.p);
+  const lead = ranked[0];
+  const second = Math.max(ranked[1]?.p ?? 0, fused.none);
+  const result = { ...base, confidence: lead.p, candidates: ranked, ranked, stage: 'rerank' as const, callIds, costUsd: cost };
+  if (fused.none >= lead.p) return { ...result, ref: null, decision: gateNoul(exists, th.ground.noul) === 'no' ? 'none' : 'escalate' };
+  const c = th.ground.choice;
+  const agree = pick.choice === lead.ref && rrPick.choice === lead.ref;
+  const marginOk = c.margin === null || lead.p - second >= c.margin;
+  if (marginOk && (lead.p >= c.act || (agree && lead.p >= c.escalate))) return { ...result, ref: lead.ref, decision: 'act' };
+  if (trial && lead.p >= th.trial.floor) return { ...result, ref: lead.ref, decision: 'try' };
+  return { ...result, ref: lead.ref, decision: 'escalate' };
 }

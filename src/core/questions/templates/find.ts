@@ -1,6 +1,6 @@
 import type { PageModel } from '../../perception/types.ts';
 import type { Thresholds } from '../../config/thresholds.ts';
-import { groundByIntent, type GroundCandidate, type GroundContext, type Intent } from './ground.ts';
+import { groundByIntent, type GroundCandidate, type GroundContext, type GroundResult, type Intent } from './ground.ts';
 import type { QuestionContext } from '../run.ts';
 
 export interface FindResult {
@@ -9,7 +9,7 @@ export interface FindResult {
   exists: number;
   confidence: number;
   best: string | null;
-  decision: 'act' | 'escalate' | 'none';
+  decision: GroundResult['decision'];
 }
 
 /** Free-text search over the page for the main agent: JEV ranks candidates; we return the top k with probabilities. */
