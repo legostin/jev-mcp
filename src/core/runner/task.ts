@@ -131,6 +131,11 @@ function pageShowsValue(model: PageModel, want: string): boolean {
  * A JEV-driven browser task. Code owns the loop and the rules; JEV answers narrow questions (page kind,
  * which element, which suggestion, did it work); the main agent is asked only when JEV is not confident.
  */
+/** A page's address without the fragment, for comparing where links lead. */
+function pageAddress(href: string, base: string): string {
+  try { const u = new URL(href, base); u.hash = ''; return u.toString(); } catch { return href; }
+}
+
 export class Task extends Emitter<TaskEvents> {
   readonly id: string;
   readonly sessionId: string;
@@ -180,6 +185,8 @@ export class Task extends Emitter<TaskEvents> {
   private entered = new Set<string>();
   /** Elements the task took to get where the goal is done (never clicked again for that). */
   private enteredVia = new Set<string>();
+  /** Pages a way in was taken from: links back to them lead away from the goal. */
+  private enteredFrom = new Set<string>();
   /** Choice groups already given "any" value. */
   private anyGroups = new Set<string>();
   private errorPages = 0;
@@ -525,6 +532,8 @@ export class Task extends Emitter<TaskEvents> {
       const bind = kind === 'ground' ? this.hintBinding() : {};
       this.hints.push({ text: answer.text, source: kind === 'ground' ? 'answer' : 'task', ...bind });
       if (answer.scope === 'domain' && this.deps.memory && model) this.deps.memory.addHint(hostOf(model.url), answer.text, bind);
+      // With new knowledge the way in may be found on pages already looked at.
+      this.entered.clear();
     }
     if (answer.type === 'thresholds') this.liveConfidence = answer.value;
     if (answer.type === 'set_param') {
@@ -1001,13 +1010,15 @@ export class Task extends Emitter<TaskEvents> {
       const anyDone = Object.values(this.status).some((s) => s === 'done') || this.anyGroups.size > 0;
       // Submit a fresh form, or go on to the next step of a multi-step form once this step changed something.
       if ((a.pageKind === 'search_form' || (hasForm && (this.submitsDone === 0 || this.dirty) && anyDone)) && (anyDone || Object.keys(this.params).length === 0)) return { type: 'submit' };
-      // A step of a multi-step form with nothing left to fill here, and the goal not reached yet: go on.
-      if (!this.spec.result && hasForm && anyDone && !yes(a.goalReached)) return { type: 'submit' };
+      // A step of a multi-step form (or a dialog of the goal) with nothing left to fill here, and the goal not
+      // reached yet: go on.
+      if (!this.spec.result && ((hasForm && anyDone) || goalDialog) && !yes(a.goalReached)) return { type: 'submit' };
     }
-    // No form and nothing to fill here (a home page when already signed in): open the part of the site where the
-    // goal is done (the account, a section, "Post an ad"), once per page state.
-    if (!hasForm && gateNoul(a.goalReached, th.assess.noul) === 'no' && !this.entered.has(model.signature) && !(this.spec.result && a.pageKind === 'results_list')
-      && pendingKeys.every((k) => this.absentOn[k] === model.signature)) {
+    // Nothing to fill here and no form to work through (a home page when already signed in, an account page with
+    // only a search box of its own): open the part of the site where the goal is done, once per page state.
+    const workForm = model.regions.some((r) => r.kind === 'form' && !this.searchBox(model, r));
+    if (!goalDialog && !workForm && gateNoul(a.goalReached, th.assess.noul) === 'no' && !this.entered.has(model.signature)
+      && !(this.spec.result && a.pageKind === 'results_list') && pendingKeys.every((k) => this.absentOn[k] === model.signature)) {
       return { type: 'enter' };
     }
     return this.decideFallback(model, a);
@@ -1497,9 +1508,11 @@ export class Task extends Emitter<TaskEvents> {
     this.entered.add(model.signature);
     // No examples in the target: "Post an ad" among them drew JEV to posting when the goal was about an existing ad.
     const target = 'the button or link that leads toward doing `goal`: it starts it, or opens the section or account area where it is done; not a search';
-    // Ways in already taken lead here: an opener clicked again would only close its menu.
+    // Ways in already taken lead here (an opener clicked again would only close its menu), and links back to pages
+    // the task came through lead away.
+    const back = [...model.elements.values()].filter((e) => e.kind === 'link' && e.href && this.enteredFrom.has(pageAddress(e.href, model.url))).map((e) => e.sig);
     const g = await this.ground(sub, {
-      target, kinds: ['link', 'button', 'clickable', 'menuitem', 'tab'], action: 'click', trial: true, exclude: [...this.enteredVia],
+      target, kinds: ['link', 'button', 'clickable', 'menuitem', 'tab'], action: 'click', trial: true, exclude: [...this.enteredVia, ...back],
     }, 'enter');
     if (!g.el) {
       const ans = await this.escalate('subintent', 'This page has no way to the goal, and no way into the right part of the site was found.', {
@@ -1525,6 +1538,7 @@ export class Task extends Emitter<TaskEvents> {
     if (!menu) {
       if (!(await this.leadsToGoal(after))) return failed(g.el, 'the page it opened does not lead to the goal');
       this.enteredVia.add(g.el.sig);
+      if (after.url !== model.url) this.enteredFrom.add(pageAddress(model.url, model.url));
       this.settleGrounding(true);
       return { outcome: 'ok', note: `${opened} to get where the goal is done`, action: { type: 'click', ref: g.el.ref } };
     }
@@ -1548,8 +1562,19 @@ export class Task extends Emitter<TaskEvents> {
     if (!(await this.leadsToGoal(landed))) return failed(item.el, 'the page it opened does not lead to the goal');
     this.enteredVia.add(g.el.sig);
     this.enteredVia.add(item.el.sig);
+    if (landed.url !== model.url) this.enteredFrom.add(pageAddress(model.url, model.url));
     this.settleGrounding(true);
     return { outcome: 'ok', note: `${opened} and chose "${item.el.name}" to get where the goal is done`, action: { type: 'click', ref: item.el.ref } };
+  }
+
+  /** A one-field search box (the site's or a list's search): not a form a goal is worked through. */
+  private searchBox(model: Model, r: Region): boolean {
+    const ids = regionAndDescendants(model, r.id);
+    const els = [...model.elements.values()].filter((e) => ids.has(e.regionId) && e.interactive);
+    const fields = els.filter((e) => e.kind === 'textbox' || e.kind === 'combobox');
+    if (els.length > 3 || fields.length !== 1) return false;
+    return /search|find|поиск|найти|искать/i.test(r.label ?? '') || fields[0].attrs.type === 'search'
+      || els.some((e) => e.hints?.includes('search') || (e.kind === 'button' && /search|find|поиск|найти|искать/i.test(e.name)));
   }
 
   /** False only when JEV is sure the page does not lead toward the goal. */

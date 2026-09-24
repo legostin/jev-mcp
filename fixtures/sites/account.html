@@ -53,6 +53,7 @@ if (q.get('view') === 'ads') {
       <a href="account.html?view=ads&tab=unpaid" class="${tab === 'unpaid' ? 'on' : ''}">Неоплаченные (1)</a>
       <a href="account.html?view=ads&tab=archive" class="${tab === 'archive' ? 'on' : ''}">Архив</a>
     </div>
+    <form class="list-search" onsubmit="return false"><input type="text" placeholder="Поиск по объявлениям" aria-label="Поиск"> <button>Искать</button></form>
     <div id="list"></div><p id="done"></p>`;
   const list = document.getElementById('list');
   if (tab === 'unpaid') {
