@@ -110,6 +110,8 @@ export interface TaskCheckpoint {
   submitsDone: number; dirty: boolean; sortTried: boolean; sortedBy: string | null;
   url: string | null; driver: string | null;
   liveConfidence?: ConfidenceConfig;
+  /** Limits the agent already extended, idle time so far and when the checkpoint was saved (added later: optional). */
+  maxStepsBonus?: number; budgetBonus?: number; idleMs?: number; savedAt?: number;
 }
 
 type TaskEvents = {
@@ -172,6 +174,8 @@ export class Task extends Emitter<TaskEvents> {
   private finalResult: TaskResult | null = null;
   private maxStepsBonus = 0;
   private budgetBonus = 0;
+  private idleMs = 0;
+  private idleSince: number | null = null;
   private lastInputCheck = 0;
   private model: Model | undefined;
   private assessCache: { sig: string; out: AssessOutput } | null = null;
@@ -313,6 +317,10 @@ export class Task extends Emitter<TaskEvents> {
   private now(): number { return (this.deps.now ?? Date.now)(); }
 
   private setState(state: TaskState, reason?: string): void {
+    // Time spent waiting for an answer, paused or interrupted does not count towards the time limit.
+    const idle = state === 'awaiting_input' || state === 'paused' || state === 'interrupted';
+    if (idle && this.idleSince === null) this.idleSince = this.now();
+    if (!idle && this.idleSince !== null) { this.idleMs += this.now() - this.idleSince; this.idleSince = null; }
     this.state = state;
     this.stateReason = reason;
     this.deps.trace.updateTask(this.id, { state });
@@ -399,6 +407,11 @@ export class Task extends Emitter<TaskEvents> {
     t.sortedBy = cp.sortedBy;
     t.liveConfidence = cp.liveConfidence;
     t.resumeUrl = cp.url;
+    t.maxStepsBonus = cp.maxStepsBonus ?? 0;
+    t.budgetBonus = cp.budgetBonus ?? 0;
+    t.idleMs = cp.idleMs ?? 0;
+    // The daemon was down since the last checkpoint: that time is idle too, until the task is resumed.
+    t.idleSince = cp.savedAt ?? Date.now();
     t.state = 'interrupted';
     t.stateReason = lost.length
       ? `the daemon restarted; resume the task to continue. Secret params were not kept (${lost.join(', ')}): give them again with an update, or when the task asks`
@@ -411,6 +424,7 @@ export class Task extends Emitter<TaskEvents> {
       v: 1, stepIdx: this.stepIdx, startedAt: this.startedAt, cost: this.cost, jevCalls: this.jevCalls, escalations: this.escalations,
       status: { ...this.status }, hints: this.hints, submitsDone: this.submitsDone, dirty: this.dirty, sortTried: this.sortTried,
       sortedBy: this.sortedBy, url: this.model?.url ?? this.resumeUrl, driver: this.spec.driver ?? null, liveConfidence: this.liveConfidence,
+      maxStepsBonus: this.maxStepsBonus, budgetBonus: this.budgetBonus, idleMs: this.idleMs, savedAt: this.now(),
     };
   }
 
@@ -418,6 +432,8 @@ export class Task extends Emitter<TaskEvents> {
     const url = this.model?.url ?? this.resumeUrl;
     const page = await this.page();
     if (url && (await page.url()) !== url) await page.navigate(url);
+    // Input the page recorded before the restart (jev's own clicks included) is not the person taking over.
+    this.lastInputCheck = this.now();
   }
 
   private async page(): Promise<PageSession> {
@@ -452,7 +468,8 @@ export class Task extends Emitter<TaskEvents> {
       if (a.type === 'continue' || a.type === 'hint') this.maxStepsBonus += 20;
     }
     const maxMinutes = this.spec.policy.max_minutes ?? cfg.limits.maxMinutes;
-    if (this.now() - this.startedAt > maxMinutes * 60_000 * (1 + this.maxStepsBonus / 20)) {
+    const idleNow = this.idleSince === null ? 0 : this.now() - this.idleSince;
+    if (this.now() - this.startedAt - this.idleMs - idleNow > maxMinutes * 60_000 * (1 + this.maxStepsBonus / 20)) {
       const a = await this.escalate('stuck', `The task has run longer than ${maxMinutes} minutes.`, { answer_with: ['continue', 'abort'] });
       if (a.type === 'continue') this.maxStepsBonus += 20;
     }
