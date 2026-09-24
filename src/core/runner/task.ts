@@ -663,12 +663,17 @@ export class Task extends Emitter<TaskEvents> {
    */
   private async trialFailed(sub: Subintent, el: ElementNode, before: Model, why: string): Promise<Outcome> {
     const page = await this.page();
+    let wentBack = false;
     for (let i = 0; i < 3; i++) {
       const now = await this.observe(false);
       const [act] = rollbackPlan(before, now, el);
       if (!act) break;
       const cur = now.elements.get(el.ref);
-      if (act === 'back') { if (!(await page.back())) break; }
+      if (act === 'back') {
+        // One step back at most; if that does not land on the old address, open it directly (never walk further back).
+        if (wentBack || !(await page.back())) { await page.navigate(before.url); await this.settle(); break; }
+        wentBack = true;
+      }
       else if (act === 'escape') await page.press('Escape');
       else if (act === 'restore' && cur) await page.type(cur.backendNodeId, el.value ?? '', { mode: 'insert', clear: true, sessionId: cur.frameSessionId });
       else if (act === 'reclick' && cur) await this.click(cur);
@@ -1221,7 +1226,8 @@ export class Task extends Emitter<TaskEvents> {
     await page.type(el.backendNodeId, value, { mode, clear: true, sessionId: el.frameSessionId });
     await this.settle();
     const after = await this.observe(false);
-    const field = after.elements.get(el.ref);
+    // Frameworks often re-render a field while it is typed into: find it by signature when the ref is gone.
+    const field = after.elements.get(el.ref) ?? [...after.elements.values()].find((e) => e.sig === el.sig && e.visible);
     this.status[k] = 'typed';
     this.lastTypedKey = k;
     const typedOk = p.secret || fieldHoldsValue(field, p) || !!field?.value;
