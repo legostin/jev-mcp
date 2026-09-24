@@ -92,7 +92,7 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
         out[id] = { type: 'choice', choice: k, probabilities: { [k]: 1 }, confidence: 1 };
       } else if (q.type === 'noul') {
         let v = 0.05;
-        if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same') v = 0.95;
+        if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same' || id === 'form_serves_goal' || id.startsWith('param_here_')) v = 0.95;
         if (id === 'goal_reached') v = s.goalReached?.(req) ?? 0.05;
         if (s.nouls?.[id] !== undefined) v = s.nouls[id];
         out[id] = { type: 'noul', noul: v };

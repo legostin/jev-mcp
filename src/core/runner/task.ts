@@ -26,7 +26,7 @@ import { inRange } from '../extract/dates.ts';
 import { deterministicRisk, domainAllowed } from '../safety/rules.ts';
 import { maskSecrets, secretValues } from '../safety/secrets.ts';
 import { thresholdsFor, hostOf } from './thresholds.ts';
-import { dateRange, fieldHoldsValue, isValueLabel, normalizeText, paramKind, requiredEmptyFields, showsValue } from './progress.ts';
+import { dateRange, fieldHoldsValue, isEmptyField, isValueLabel, normalizeText, paramKind, requiredEmptyFields, showsValue } from './progress.ts';
 import { Emitter } from '../util/events.ts';
 import { newId } from '../util/ids.ts';
 import { logger } from '../util/log.ts';
@@ -85,6 +85,8 @@ type Subintent =
   | { type: 'scroll' }
   | { type: 'go_back' }
   | { type: 'reload' }
+  | { type: 'enter' }
+  | { type: 'fill_any'; ref: string; group: string }
   | { type: 'wait' }
   | { type: 'done'; reason: string }
   | { type: 'blocker'; kind: string; summary: string };
@@ -162,6 +164,10 @@ export class Task extends Emitter<TaskEvents> {
   /** Error pages already reloaded once (by URL). */
   private reloaded = new Set<string>();
   private noResultsOn: string | null = null;
+  /** Page states where the way into the goal's section was already looked for. */
+  private entered = new Set<string>();
+  /** Choice groups already given "any" value. */
+  private anyGroups = new Set<string>();
   private errorPages = 0;
   /** Address right after the last submit: a later change means the site applied filters itself. */
   private lastSubmitUrl: string | null = null;
@@ -234,6 +240,13 @@ export class Task extends Emitter<TaskEvents> {
   }
 
   resume(): void {
+    // The person may have filled in some fields while in control: check the values on the page again.
+    if (this.stateReason === 'user_takeover') {
+      const model = this.model;
+      for (const [k, st] of Object.entries(this.status)) {
+        if (st === 'done' && !this.params[k].secret && this.paramRefs[k] && model?.elements.has(this.paramRefs[k])) this.status[k] = 'typed';
+      }
+    }
     if (this.pausedWaiter) { const w = this.pausedWaiter; this.pausedWaiter = null; w.resolve(); }
     if (this.state === 'paused') this.setState(this.pending ? 'awaiting_input' : 'running');
     if (this.state === 'interrupted') { void this.run(); }
@@ -492,6 +505,8 @@ export class Task extends Emitter<TaskEvents> {
       case 'apply_sort': return stepCard('apply_sort', `sort the results ${this.sortOrder()}`);
       case 'submit': return stepCard('submit', 'submit the search form');
       case 'dismiss_overlay': return stepCard('dismiss_overlay', `close the ${sub.overlayKind.replace(/_/g, ' ')} overlay`);
+      case 'enter': return stepCard('enter', 'open the part of the site where the goal is done');
+      case 'fill_any': return stepCard('fill_any', 'choose a value for a required field that no param covers');
       default: return stepCard(sub.type, label(sub));
     }
   }
@@ -623,7 +638,8 @@ export class Task extends Emitter<TaskEvents> {
     if (!irreversible && askJev) {
       const res = await runQuestions(this.qctx(), buildActionClass(el, model, this.spec.goal, this.budget()));
       const cls = readActionClass(res.answers);
-      if (cls.pIrreversible >= 0.5) { irreversible = true; reasons.push(`JEV rates it irreversible (p=${cls.pIrreversible.toFixed(2)})`); }
+      // Code rules catch payments, orders, publishing and deletion; JEV alone must be sure (sign-in and "next" are not).
+      if (cls.pIrreversible >= 0.8) { irreversible = true; reasons.push(`JEV rates it irreversible (p=${cls.pIrreversible.toFixed(2)})`); }
     }
     if (!irreversible) return 'ok';
     const host = hostOf(model.url);
@@ -727,6 +743,13 @@ export class Task extends Emitter<TaskEvents> {
       model, goal: this.spec.goal, params: this.params, progress: this.status, hints: hintsFor(this.hints),
       uncertainParams: Object.keys(this.status).filter((k) => this.status[k] === 'typed' && !this.params[k].secret),
       overlays, requiredEmpty: allDone ? requiredEmptyFields(model) : [], hasResultSchema: !!this.spec.result, budgetTokens: this.budget(),
+      // With several params left, one batched look tells which have a control on this page (wizards show a few per step).
+      pendingParams: (() => {
+        const left = Object.keys(this.status).filter((k) => this.status[k] === 'pending' && paramKind(this.params[k]) !== 'date');
+        return left.length >= 2 ? left : [];
+      })(),
+      checkFormFit: Object.values(this.status).some((s) => s === 'pending')
+        && [...model.elements.values()].some((e) => e.visible && e.interactive && ['textbox', 'combobox', 'select', 'radio'].includes(e.kind)),
     };
     const res = await runQuestions(this.qctx(), buildAssess(input));
     const out = readAssess(res.answers, input);
@@ -821,6 +844,10 @@ export class Task extends Emitter<TaskEvents> {
     // An open calendar with a pending date param.
     const pendingDate = Object.keys(this.params).find((k) => paramKind(this.params[k]) === 'date' && this.status[k] === 'pending');
     if (pendingDate && this.popupCalendar(model).length >= 7) return { type: 'pick_date', key: pendingDate };
+    // A form that does not lead to the goal (a site search when the goal is to post something): find the way in first.
+    if (a.formServesGoal <= th.assess.noul.actNo && !this.entered.has(model.signature) && Object.values(this.status).some((s) => s === 'pending')) {
+      return { type: 'enter' };
+    }
     // Params come first while the page still has a form for them (sites often preview results before the search).
     // A param counts as pending while it can still be filled here, or revealed behind "more filters".
     const pendingKeys = Object.keys(this.params).filter((k) => (this.status[k] === 'pending' || this.status[k] === 'typed')
@@ -842,6 +869,10 @@ export class Task extends Emitter<TaskEvents> {
         const s = this.status[k];
         if (s !== 'pending' && s !== 'typed') continue;
         if (this.absentOn[k] === model.signature) continue;
+        if (s === 'pending' && a.paramHere[k] !== undefined && a.paramHere[k] <= th.assess.noul.actNo) {
+          this.absentOn[k] = model.signature;
+          continue;
+        }
         if (s === 'typed') {
           const reflected = a.paramReflected[k];
           if (reflected !== undefined && yes(reflected)) { this.status[k] = 'done'; continue; }
@@ -858,7 +889,13 @@ export class Task extends Emitter<TaskEvents> {
           }
         }
       }
-      const missing = Object.entries(a.requiredUncovered).filter(([, p]) => yes(p));
+      const anyOk = this.spec.policy.fill_required === 'any';
+      if (anyOk) {
+        const choice = this.emptyChoice(model);
+        if (choice) return { type: 'fill_any', ref: choice.ref, group: choice.group };
+      }
+      const choiceKinds = new Set(['select', 'combobox', 'radio']);
+      const missing = Object.entries(a.requiredUncovered).filter(([ref, p]) => yes(p) && !(anyOk && choiceKinds.has(model.elements.get(ref)?.kind ?? '')));
       if (missing.length) {
         const [ref] = missing[0];
         const el = model.elements.get(ref);
@@ -869,7 +906,10 @@ export class Task extends Emitter<TaskEvents> {
         if (ans.type === 'set_param' || ans.type === 'hint') return this.chooseSubintent(await this.observe(false), a);
       }
       const anyDone = Object.values(this.status).some((s) => s === 'done');
-      if ((a.pageKind === 'search_form' || (hasForm && this.submitsDone === 0 && anyDone)) && (anyDone || Object.keys(this.params).length === 0)) return { type: 'submit' };
+      // Submit a fresh form, or go on to the next step of a multi-step form once this step changed something.
+      if ((a.pageKind === 'search_form' || (hasForm && (this.submitsDone === 0 || this.dirty) && anyDone)) && (anyDone || Object.keys(this.params).length === 0)) return { type: 'submit' };
+      // A step of a multi-step form with nothing left to fill here, and the goal not reached yet: go on.
+      if (!this.spec.result && hasForm && anyDone && !yes(a.goalReached)) return { type: 'submit' };
     }
     return this.decideFallback(model, a);
   }
@@ -951,6 +991,8 @@ export class Task extends Emitter<TaskEvents> {
         await this.settle();
         return { outcome: 'ok', note: 'scrolled down', action: { type: 'scroll' } };
       }
+      case 'enter': return this.enter(sub, model);
+      case 'fill_any': return this.fillAny(sub, model);
       case 'reload': {
         this.reloaded.add(model.url);
         await (await this.page()).navigate(model.url);
@@ -1348,6 +1390,98 @@ export class Task extends Emitter<TaskEvents> {
     return { outcome: 'failed', note: `no selectable date for ${k} within 14 months` };
   }
 
+  /** The page's form does not lead to the goal: open the section where it is done ("Post an ad", "Sell", "Create"). */
+  private async enter(sub: Subintent, model: Model): Promise<Outcome> {
+    this.entered.add(model.signature);
+    const g = await this.ground(sub, {
+      target: 'the button or link that starts what the goal asks to do (for example "Post an ad", "Sell", "Create" or the right section of the site), not a search',
+      kinds: ['link', 'button', 'clickable', 'menuitem', 'tab'], action: 'click', trial: true,
+    }, 'enter');
+    if (!g.el) {
+      const ans = await this.escalate('subintent', 'The form on this page does not lead to the goal, and no way into the right section was found.', {
+        answer_with: ['hint', 'continue', 'abort'],
+      });
+      return { outcome: 'retry', note: `no way into the goal's section (${ans.type})` };
+    }
+    const before = this.model!;
+    // Links only navigate; buttons get the usual safety check.
+    if (!(g.el.kind === 'link' && g.el.href) && await this.guard(g.el, 'open the section for the goal', false) === 'skip') {
+      return { outcome: 'skipped', note: 'entry not approved' };
+    }
+    await this.click(g.el);
+    await this.settle();
+    const after = await this.observe(false);
+    if (g.trial && !hadEffect(before, after, g.el)) return this.trialFailed(sub, g.el, before, 'nothing opened');
+    this.settleGrounding(true);
+    return { outcome: 'ok', note: `opened ${g.el.ref} "${g.el.name}" to get where the goal is done`, action: { type: 'click', ref: g.el.ref } };
+  }
+
+  /**
+   * A required choice no param covers: an empty required list, or a radio group in a form with nothing chosen.
+   * Groups are keyed by name (or region and label) so each is filled once.
+   */
+  private emptyChoice(model: Model): { ref: string; group: string } | null {
+    const formIds = new Set(model.regions.filter((r) => r.kind === 'form').flatMap((r) => {
+      const ids = [r.id];
+      for (let grew = true; grew;) { grew = false; for (const x of model.regions) if (x.parentId && ids.includes(x.parentId) && !ids.includes(x.id)) { ids.push(x.id); grew = true; } }
+      return ids;
+    }));
+    const paramRefs = new Set(Object.values(this.paramRefs));
+    const els = [...model.elements.values()].filter((e) => e.visible && !e.states.disabled);
+    for (const e of els) {
+      if ((e.kind === 'select' || e.kind === 'combobox') && e.states.required && isEmptyField(e) && !paramRefs.has(e.ref)) {
+        const group = `${e.kind}:${e.sig}`;
+        if (!this.anyGroups.has(group)) return { ref: e.ref, group };
+      }
+    }
+    const groups = new Map<string, ElementNode[]>();
+    for (const e of els) {
+      if (e.kind !== 'radio' || !formIds.has(e.regionId)) continue;
+      const key = `radio:${e.attrs.name || `${e.regionId}:${e.context ?? e.label ?? ''}`}`;
+      groups.set(key, [...(groups.get(key) ?? []), e]);
+    }
+    for (const [group, radios] of groups) {
+      // A group a param already answered (its radio is the param's field) is not "empty".
+      if (this.anyGroups.has(group) || radios.some((r) => r.states.checked || paramRefs.has(r.ref))) continue;
+      return { ref: radios[0].ref, group };
+    }
+    return null;
+  }
+
+  /** policy.fill_required "any": JEV picks the option that fits the goal and hints best, else the first one. */
+  private async fillAny(sub: Extract<Subintent, { type: 'fill_any' }>, model: Model): Promise<Outcome> {
+    this.anyGroups.add(sub.group);
+    const el = model.elements.get(sub.ref);
+    if (!el) return { outcome: 'retry', note: 'the field is gone' };
+    const page = await this.page();
+    const options: { key: string; label: string; el?: ElementNode; value?: string }[] = [];
+    if (el.kind === 'select') {
+      (el.options ?? []).forEach((o, i) => { if (o.value && !/^(выберите|select|choose|—|-)/i.test(o.label.trim())) options.push({ key: `o${i}`, label: o.label, value: o.value }); });
+    } else if (el.kind === 'radio') {
+      const radios = [...model.elements.values()].filter((r) => r.kind === 'radio' && r.visible && !r.states.disabled
+        && (el.attrs.name ? r.attrs.name === el.attrs.name : r.regionId === el.regionId));
+      radios.forEach((r, i) => options.push({ key: `o${i}`, label: r.name || r.text || '', el: r }));
+    }
+    if (!options.length) {
+      // A custom dropdown: open it and let the next steps see its options.
+      await this.click(el);
+      await this.settle();
+      return { outcome: 'ok', note: `opened ${el.ref} "${el.name}" to choose any value` };
+    }
+    const criteria: Record<string, null> = Object.fromEntries(options.map((o) => [o.key, null]));
+    const res = await runQuestions(this.qctx(), {
+      template: 'widget.any_option',
+      state: buildState({ goal: this.spec.goal, hints: hintsFor(this.hints), extra: { field: describeElement(el, { pageUrl: model.url }), options: Object.fromEntries(options.map((o) => [o.key, o.label])) } }, this.budget()),
+      questions: { pick: { type: 'choice', instructions: 'Which option in `options` fits `goal` and `hints` best? If nothing in them decides it, the first option.', criteria } },
+    });
+    const picked = options.find((o) => o.key === choiceOf(res.answers, 'pick').choice) ?? options[0];
+    if (picked.value !== undefined) await page.selectOption(el.backendNodeId, picked.value, el.frameSessionId);
+    else if (picked.el) await this.click(picked.el);
+    await this.settle();
+    this.dirty = true;
+    return { outcome: 'ok', note: `chose "${picked.label}" for ${describeElement(el)} (required, no param)`, action: { type: 'choose', ref: picked.el?.ref ?? el.ref } };
+  }
+
   /**
    * Range pickers stay open after the first date, waiting for a return date or a confirmation. When no other date
    * param is pending, confirm the choice with the picker's own button ("One way", "Done", "Apply"), else Escape.
@@ -1508,7 +1642,7 @@ export class Task extends Emitter<TaskEvents> {
       if (r.kind === 'form') { formRegion = r.id; break; }
     }
     const g = await this.ground(sub, {
-      target: 'the button that submits the form and starts the search (or shows the matching results)', kinds: ['button', 'clickable', 'link'],
+      target: 'the button that submits the form or goes on to its next step (such as Search, Show results, Next, Continue, or Skip when the step is optional)', kinds: ['button', 'clickable', 'link'],
       regionId: formRegion, action: 'click',
     }, 'submit');
     if (!g.el) {
@@ -1537,8 +1671,10 @@ export class Task extends Emitter<TaskEvents> {
     this.lastSubmitUrl = after.url;
     const diff = diffModels(model, after);
     const newRegions = diff.newRegions.map((id) => after.regions.find((r) => r.id === id)).filter(Boolean) as Region[];
+    // A multi-step form swaps its controls in place: count that as progress too.
+    const swapped = diff.added.filter((r) => after.elements.get(r)?.interactive).length + diff.removed.length;
     const progressed = after.url !== beforeUrl || newRegions.some((r) => r.kind === 'list')
-      || newRegions.filter((r) => r.kind !== 'popup' && r.kind !== 'overlay' && r.kind !== 'dialog').length >= 2;
+      || newRegions.filter((r) => r.kind !== 'popup' && r.kind !== 'overlay' && r.kind !== 'dialog').length >= 2 || swapped >= 4;
     // The form may answer a submit by opening its date picker: the date is missing or was not taken.
     const dateKey = Object.keys(this.params).find((k) => paramKind(this.params[k]) === 'date');
     if (!progressed && dateKey && this.popupCalendar(after).length >= 7) {

@@ -8,6 +8,7 @@ export const ACTION_CLASSES = {
   navigation: 'Opens another page, tab or view; nothing is committed.',
   search_submit: 'Runs a search, applies filters or sorting.',
   input: 'Changes a form value, opens a picker or a menu.',
+  form_step: 'Signs in, or moves on to the next step of a multi-step form; nothing is committed yet.',
   irreversible: 'Commits something with consequences: pays, orders, books, sends, posts, subscribes, registers or deletes.',
   other: 'Something else.',
 } as const;

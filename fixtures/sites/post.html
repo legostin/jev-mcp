@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Авторынок — новое объявление</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; color: #222; }
+  header { height: 56px; background: #f3f3f3; display: flex; gap: 20px; align-items: center; padding: 0 16px; }
+  main { padding: 16px; max-width: 960px; }
+  .steps { display: flex; gap: 8px; position: sticky; top: 0; background: #fff; padding: 8px 0; z-index: 5; }
+  .steps button { padding: 10px 16px; border: 1px solid #ccc; border-radius: 8px; background: #fff; font-size: 15px; }
+  .steps button.done { background: #e6f0ff; }
+  .steps button.future { color: #aaa; pointer-events: none; }
+  .grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+  .grid button { padding: 12px 18px; border: 1px solid #ddd; border-radius: 10px; background: #fff; cursor: pointer; font-size: 15px; }
+  fieldset { border: 1px solid #ddd; border-radius: 10px; margin: 12px 0; padding: 12px; }
+  fieldset label { display: inline-block; margin: 4px 12px 4px 0; }
+  .row { margin: 12px 0; }
+  .row label { display: block; margin-bottom: 4px; }
+  input[type=text], select, textarea { padding: 8px; font-size: 15px; width: 320px; }
+  .primary { padding: 12px 24px; background: #1f7ae0; color: #fff; border: 0; border-radius: 10px; font-size: 16px; cursor: pointer; }
+  .primary:disabled { background: #9bbbe6; cursor: default; }
+  .ghost { padding: 12px 24px; background: #fff; border: 1px solid #1f7ae0; color: #1f7ae0; border-radius: 10px; font-size: 16px; cursor: pointer; }
+  #done { font-size: 20px; color: #1a7f37; }
+</style>
+</head>
+<body>
+<header><a href="filters.html">Авторынок</a><a href="filters.html">Поиск машин</a><span>Кабинет</span></header>
+<main>
+  <h1>Новое объявление «Легковые»</h1>
+  <nav class="steps" id="steps"></nav>
+  <form id="wizard" onsubmit="return false"></form>
+  <p id="done"></p>
+</main>
+<script>
+const STEPS = ['Марка', 'Модель', 'Год / Кузов', 'Параметры', 'Фото', 'Публикация'];
+const MODELS = { Toyota: ['Camry', 'Corolla', 'RAV4', 'Land Cruiser'], Hyundai: ['Accent', 'Elantra', 'Tucson'], Kia: ['Rio', 'K5', 'Sportage'] };
+const s = { step: 0, brand: null, model: null, year: null, body: null };
+const form = document.getElementById('wizard');
+
+function steps() {
+  const nav = document.getElementById('steps');
+  nav.innerHTML = '';
+  STEPS.forEach((name, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = i === 0 && s.brand ? s.brand : i === 1 && s.model ? s.model : name;
+    b.className = i < s.step ? 'done' : i > s.step ? 'future' : '';
+    b.onclick = () => { if (i <= s.step) go(i); };
+    nav.appendChild(b);
+  });
+}
+function go(i) { s.step = i; render(); }
+function grid(values, onPick) {
+  const g = document.createElement('div');
+  g.className = 'grid';
+  for (const v of values) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = v; b.onclick = () => onPick(v);
+    g.appendChild(b);
+  }
+  return g;
+}
+function radios(legend, name, values, onChange) {
+  const f = document.createElement('fieldset');
+  f.innerHTML = `<legend>${legend}</legend>` + values.map((v) => `<label><input type="radio" name="${name}" value="${v}"> ${v}</label>`).join('');
+  f.addEventListener('change', (e) => onChange(e.target.value));
+  return f;
+}
+function render() {
+  steps();
+  form.innerHTML = '';
+  if (s.step === 0) {
+    form.innerHTML = '<input type="text" placeholder="Поиск по марке">';
+    form.appendChild(grid(Object.keys(MODELS), (v) => { s.brand = v; go(1); }));
+  } else if (s.step === 1) {
+    form.appendChild(grid(MODELS[s.brand], (v) => { s.model = v; go(2); }));
+  } else if (s.step === 2) {
+    const next = document.createElement('button');
+    next.type = 'submit'; next.className = 'primary'; next.textContent = 'Далее'; next.disabled = true;
+    const check = () => { next.disabled = !(s.year && s.body); };
+    form.appendChild(radios('Год выпуска', 'year', ['2024', '2020', '2015', '2012', '2008'], (v) => { s.year = v; check(); }));
+    form.appendChild(radios('Кузов', 'body', ['Седан', 'Универсал', 'Хэтчбек'], (v) => { s.body = v; check(); }));
+    next.onclick = () => go(3);
+    form.appendChild(next);
+  } else if (s.step === 3) {
+    form.appendChild(radios('Двигатель', 'engine', ['Бензиновый', 'Гибридный', 'Дизельный'], () => {}));
+    form.insertAdjacentHTML('beforeend', `
+      <div class="row"><label for="color">Цвет</label><select id="color" required><option value="">Выберите цвет</option><option>Белый</option><option>Чёрный</option><option>Серый</option></select></div>
+      <div class="row"><label for="city">Город</label><select id="city"><option value="">Выберите город</option><option>Алматы</option><option>Астана</option><option>Павлодар</option></select></div>
+      <div class="row"><label for="price">Цена, ₸</label><input type="text" id="price" inputmode="numeric"></div>
+      <div class="row"><label for="mileage">Пробег, км</label><input type="text" id="mileage" inputmode="numeric"></div>
+      <div class="row"><label for="descr">Описание</label><textarea id="descr" rows="3"></textarea></div>
+      <p id="err" style="color:#c00"></p>
+      <button type="submit" class="primary" id="next4">Далее</button>`);
+    document.getElementById('next4').onclick = () => {
+      const miss = [['color', 'цвет'], ['city', 'город'], ['price', 'цену']].filter(([id]) => !document.getElementById(id).value).map(([, n]) => n);
+      const engine = form.querySelector('input[name=engine]:checked');
+      if (!engine) miss.push('двигатель');
+      document.getElementById('err').textContent = miss.length ? `Укажите ${miss.join(', ')}` : '';
+      if (!miss.length) go(4);
+    };
+  } else if (s.step === 4) {
+    form.insertAdjacentHTML('beforeend', `
+      <div class="row"><label for="photos">Фотографии</label><input type="file" id="photos" multiple accept="image/*"></div>
+      <button type="submit" class="primary" disabled>Далее</button>
+      <button type="button" class="ghost" id="skip">Пропустить</button>`);
+    document.getElementById('skip').onclick = () => go(5);
+  } else if (s.step === 5) {
+    form.insertAdjacentHTML('beforeend', `
+      <p>${s.brand} ${s.model}, ${s.year} г., ${s.body}</p>
+      <fieldset><legend>Способ оплаты</legend>
+        <label><input type="radio" name="pay" value="new"> Новая карта</label>
+        <label><input type="radio" name="pay" value="saved"> Сохранённая карта •••• 4242</label>
+      </fieldset>
+      <p id="payerr" style="color:#c00"></p>
+      <button type="submit" class="primary" id="publish">Опубликовать и оплатить 1 500 ₸</button>`);
+    document.getElementById('publish').onclick = () => {
+      const pay = form.querySelector('input[name=pay]:checked');
+      if (!pay) { document.getElementById('payerr').textContent = 'Выберите способ оплаты'; return; }
+      form.innerHTML = '';
+      document.getElementById('done').textContent = pay.value === 'saved'
+        ? 'Объявление опубликовано и оплачено сохранённой картой •••• 4242'
+        : 'Введите данные новой карты';
+    };
+  }
+}
+render();
+</script>
+</body>
+</html>

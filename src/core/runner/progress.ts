@@ -46,7 +46,13 @@ export function fieldHoldsValue(el: ElementNode | undefined, p: ParamSpec): bool
 }
 
 /** Empty, visible, required text fields: candidates for "the form needs something we were not given". */
+/** A select shows its chosen option's label; it is empty when that option has no value (a "Choose…" placeholder). */
+export function isEmptyField(e: ElementNode): boolean {
+  if (e.kind === 'select' && e.options?.length) return !e.options.find((o) => o.selected)?.value;
+  return !e.value;
+}
+
 export function requiredEmptyFields(model: PageModel): ElementNode[] {
   return [...model.elements.values()].filter((e) =>
-    e.visible && (e.kind === 'textbox' || e.kind === 'combobox' || e.kind === 'select') && e.states.required && !e.value);
+    e.visible && (e.kind === 'textbox' || e.kind === 'combobox' || e.kind === 'select') && e.states.required && isEmptyField(e));
 }

@@ -112,7 +112,8 @@ function ingestSnapshot(
     for (let i = 0; i < count; i++) {
       const attrsFlat: number[] = nodes.attributes?.[i] ?? [];
       const attrs: Record<string, string> = {};
-      for (let a = 0; a + 1 < attrsFlat.length; a += 2) attrs[strings[attrsFlat[a]].toLowerCase()] = strings[attrsFlat[a + 1]];
+      // An empty value comes as string index -1: boolean attributes (required, disabled, readonly) and value="".
+      for (let a = 0; a + 1 < attrsFlat.length; a += 2) attrs[strings[attrsFlat[a]].toLowerCase()] = attrsFlat[a + 1] >= 0 ? strings[attrsFlat[a + 1]] : '';
       const nodeType = nodes.nodeType[i];
       const nodeName = strings[nodes.nodeName[i]] ?? '';
       const raw: RawNode = {

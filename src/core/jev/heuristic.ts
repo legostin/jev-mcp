@@ -39,7 +39,7 @@ export function createHeuristicClient() {
         const sorted = Object.entries(probabilities).sort((a, b) => b[1] - a[1]);
         out[id] = { type: 'choice', choice: sorted[0][0], probabilities, confidence: Math.min(1, sorted[0][1] - (sorted[1]?.[1] ?? 0) + 0.3) };
       } else if (q.type === 'noul') {
-        out[id] = { type: 'noul', noul: /exists|fit|effect|present/.test(id) ? 0.9 : 0.1 };
+        out[id] = { type: 'noul', noul: /exists|fit|effect|present|serves|here/.test(id) ? 0.9 : 0.1 };
       } else {
         const n = q.criteria.length;
         out[id] = { type: 'score', score: 0, probabilities: Object.fromEntries(Array.from({ length: n }, (_, i) => [String(i), i === 0 ? 1 : 0])), legend: Object.fromEntries(q.criteria.map((c, i) => [String(i), String(c)])), confidence: 1 };

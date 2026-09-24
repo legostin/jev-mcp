@@ -237,7 +237,8 @@ function states(n: RawNode): ElementStates {
   const a = n.attrs;
   const bool = (v: unknown) => v === true || v === 'true';
   const st: ElementStates = {};
-  if (bool(p.disabled) || a.disabled !== undefined || a['aria-disabled'] === 'true') st.disabled = true;
+  // A control that takes no pointer events (inactive wizard tabs, greyed-out steps) cannot be used: treat it as disabled.
+  if (bool(p.disabled) || a.disabled !== undefined || a['aria-disabled'] === 'true' || n.style?.pointerEvents === 'none') st.disabled = true;
   const checked = p.checked ?? (n.checked ? true : a['aria-checked']);
   if (checked === true || checked === 'true' || checked === 'mixed') st.checked = true;
   else if (checked === false || checked === 'false') st.checked = false;

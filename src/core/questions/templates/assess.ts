@@ -40,6 +40,10 @@ export interface AssessInput {
   /** Empty required fields that no param obviously covers. */
   requiredEmpty: ElementNode[];
   hasResultSchema: boolean;
+  /** Ask whether the page's form leads to the goal (params are still pending and the page has fields). */
+  checkFormFit?: boolean;
+  /** Pending params to check for a field on this page (one batched noul each: absent ones are skipped without grounding). */
+  pendingParams?: string[];
   budgetTokens: number;
 }
 
@@ -53,6 +57,10 @@ export interface AssessOutput {
   validationError: number;
   paramReflected: Record<string, number>;
   requiredUncovered: Record<string, number>;
+  /** Does the form on the page lead to the goal? 1 when not asked. */
+  formServesGoal: number;
+  /** Per pending param: is there a control on this page to set it? */
+  paramHere: Record<string, number>;
 }
 
 /** Elements that best summarise a page for page-level judgments: headings, visible text and controls in view. */
@@ -69,6 +77,15 @@ export function buildAssess(input: AssessInput): QuestionSet {
     goal_reached: { type: 'noul', instructions: 'Does `page` already show what `goal` asks for?' },
     validation_error: { type: 'noul', instructions: 'Does `page` show an error or validation message about entered data?' },
   };
+  if (input.checkFormFit) {
+    questions.form_serves_goal = {
+      type: 'noul',
+      instructions: 'Is the form on `page` a step towards `goal` (such as signing in, choosing a category, entering the details or searching when `goal` is a search), rather than an unrelated form (for example a site search when `goal` is to post, create or edit something)?',
+    };
+  }
+  for (const k of input.pendingParams ?? []) {
+    questions[`param_here_${k}`] = { type: 'noul', instructions: `Does \`page\` show a field, list, option or button where \`params.${k}\` can be set?` };
+  }
   if (input.hasResultSchema) {
     questions.results_match = { type: 'noul', instructions: 'Does `page` show a list of results for the search described by `params`?' };
   }
@@ -115,5 +132,7 @@ export function readAssess(answers: Record<string, Answer>, input: AssessInput):
     validationError: noulOf(answers, 'validation_error'),
     paramReflected,
     requiredUncovered,
+    formServesGoal: input.checkFormFit ? noulOf(answers, 'form_serves_goal') : 1,
+    paramHere: Object.fromEntries((input.pendingParams ?? []).map((k) => [k, noulOf(answers, `param_here_${k}`)])),
   };
 }

@@ -105,6 +105,33 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(questions).toHaveLength(0);
   }, 300_000);
 
+  it('finds the way into an ad wizard from a search page, fills it with any values where allowed and pays', async () => {
+    const created = await client.call('task.create', {
+      goal: 'Post a new car ad with the given details (no photos), publish it and pay for it with the saved bank card',
+      site: fixtures.url('filters.html'),
+      params: {
+        brand: { value: 'Toyota', about: 'car brand (make)' },
+        model: { value: 'Camry', about: 'car model' },
+        year: { value: '2015', about: 'year of manufacture' },
+        city: { value: 'Алматы', about: 'city where the car is sold' },
+        price: { value: '5000000', about: 'price in tenge' },
+        mileage: { value: '100000', about: 'mileage in km' },
+        description: { value: 'Тестовое описание', about: 'ad description text' },
+      },
+      hints: ['Do not upload any photos: skip the photo step.', 'Pay with the saved bank card.'],
+      policy: { fill_required: 'any', irreversible: 'ask' },
+    });
+    // The agent confirms the publication and the payment, as the user asked for them.
+    const { result, questions } = await runToEnd(created.task_id, (q) => (q.kind === 'risk_confirm' ? { type: 'continue' } : pickTop(q)), 6);
+    const trace = await client.call('task.trace', { task_id: created.task_id });
+    for (const s of trace.steps) console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''}`);
+    const page = await client.call('page.observe', { tab: trace.task?.tab ?? undefined, view: 'overview' }).catch(() => null);
+    void page;
+    expect(result.status).toBe('done');
+    expect(trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ')).toMatch(/опубликовано и оплачено|goal/);
+    expect(questions.every((q: any) => q.kind === 'risk_confirm')).toBe(true);
+  }, 400_000);
+
   it('follows results that open in a new tab', async () => {
     const created = await client.call('task.create', spec(fixtures.url('flights.html?newtab=1')));
     const { result } = await runToEnd(created.task_id, pickTop);

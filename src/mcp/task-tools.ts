@@ -126,6 +126,7 @@ export function registerTaskTools(server: McpServer, deps: ToolDeps): void {
         max_minutes: z.number().positive().optional(),
         budget_usd: z.number().positive().optional(),
         max_items: z.number().int().positive().optional(),
+        fill_required: z.enum(['ask', 'any']).optional().describe('Required choices no param covers (lists, radio groups): "ask" you (default) or take "any" option that fits the goal and hints.'),
       }).optional(),
       driver: z.enum(['auto', 'extension', 'chromium']).optional(),
     },

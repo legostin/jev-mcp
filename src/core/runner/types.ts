@@ -36,6 +36,8 @@ export const taskSpecSchema = z.object({
     max_minutes: z.number().positive().optional(),
     budget_usd: z.number().positive().optional(),
     max_items: z.number().int().positive().optional(),
+    /** Required choices without a param (lists, radio groups): "ask" the agent, or take "any" suitable option. */
+    fill_required: z.enum(['ask', 'any']).optional(),
   }).default({}),
   driver: z.enum(['auto', 'extension', 'chromium']).optional(),
 });
