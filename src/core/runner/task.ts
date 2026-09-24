@@ -368,6 +368,9 @@ export class Task extends Emitter<TaskEvents> {
     if (Object.entries(spec.params).some(([k, p]) => p.secret && cp.status[k] !== 'done')) return null;
     const t = new Task(spec, deps, rec.id);
     Object.assign(t.status, cp.status);
+    // The page may have moved on or back without us (state that lives in the page, not in the address): values
+    // recorded as set are checked again on the page before they are trusted.
+    for (const [k, st] of Object.entries(t.status)) if (st === 'done' && !spec.params[k].secret) t.status[k] = 'typed';
     t.hints = cp.hints;
     t.stepIdx = cp.stepIdx;
     t.startedAt = cp.startedAt;

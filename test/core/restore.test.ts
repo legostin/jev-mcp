@@ -36,7 +36,8 @@ describe('tasks after a daemon restart', () => {
       const deps = { sessionId: 's2', getConfig: () => parseConfig({}), jev: createScriptedClient(() => ({})), trace, port };
       const ok = Task.restore(recs.find((r) => r.id === 't_ok')!, deps)!;
       expect(ok.state).toBe('interrupted');
-      expect(ok.statusView()).toMatchObject({ step: 4, progress: { email: 'done', pw: 'done' } });
+      // Non-secret values are checked on the page again after a restart; the typed secret stays done.
+      expect(ok.statusView()).toMatchObject({ step: 4, progress: { email: 'typed', pw: 'done' } });
       expect(Task.restore(recs.find((r) => r.id === 't_secret')!, deps)).toBeNull();
     } finally {
       trace.close();
