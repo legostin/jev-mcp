@@ -9,7 +9,7 @@ import { diffModels } from '../perception/diff.ts';
 import { describeElement, renderCandidate, renderDiff, renderOverview } from '../perception/render.ts';
 import { parseCalendarCells } from '../perception/calendar.ts';
 import { candidateElements, groundByIntent, regionAndDescendants, type GroundResult, type Intent } from '../questions/templates/ground.ts';
-import { buildAssess, buildGoesOn, buildLeads, readAssess, type AssessOutput } from '../questions/templates/assess.ts';
+import { buildAssess, readAssess, type AssessOutput } from '../questions/templates/assess.ts';
 import { buildDecide, readDecide, type SubintentOption } from '../questions/templates/decide.ts';
 import { buildSuggestionPick, buildOptionPick, buildGoalPrefs } from '../questions/templates/widget.ts';
 import { buildActionClass, readActionClass } from '../questions/templates/safety.ts';
@@ -197,6 +197,10 @@ export class Task extends Emitter<TaskEvents> {
   private goesOn = new Map<string, boolean>();
   /** Choice groups already given "any" value. */
   private anyGroups = new Set<string>();
+  /** A field search started ahead (see startPrefetch). */
+  private prefetch: { key: string; promise: Promise<GroundResult | null> } | null = null;
+  /** The risk question for the one obvious submit button, asked while the button is being grounded. */
+  private guardPrefetch: { key: string; promise: Promise<ReturnType<typeof readActionClass> | null> } | null = null;
   private errorPages = 0;
   /** Address right after the last submit: a later change means the site applied filters itself. */
   private lastSubmitUrl: string | null = null;
@@ -619,6 +623,37 @@ export class Task extends Emitter<TaskEvents> {
     }
   }
 
+  /** Everything a grounding question depends on, and a key that is equal only for the same question. */
+  private groundArgs(sub: Subintent, intent: Intent, model: Model) {
+    const th = this.th();
+    const tried = this.rejected.get(label(sub)) ?? [];
+    const trial = !!intent.trial && th.trial.enabled && tried.length < th.trial.tries;
+    const full: Intent = { ...intent, trial, exclude: [...(intent.exclude ?? []), ...tried.map((t) => t.sig)] };
+    const card = this.card(sub);
+    const gctx = { goal: this.spec.goal, step: card, hints: hintsFor(this.hints, card), budgetTokens: this.budget() };
+    return { th, tried, trial, card, intent: full, gctx, key: JSON.stringify([model.signature, full, gctx.hints, th.ground]) };
+  }
+
+  /**
+   * In a run of fields, the next step is almost always the next pending param: its field search starts while the
+   * page is being assessed (same question, so the same answer), and the step uses it if that is indeed the step.
+   */
+  private startPrefetch(model: Model): void {
+    this.prefetch = null;
+    const prev = this.lastSub;
+    if (!prev || (prev.type !== 'fill_param' && prev.type !== 'pick_suggestion')) return;
+    if (model.regions.some((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking) || this.popupOptions(model).length) return;
+    const k = Object.keys(this.params).find((x) => (this.status[x] === 'pending' || this.status[x] === 'typed') && this.absentOn[x] !== model.signature);
+    if (!k || this.status[k] !== 'pending' || paramKind(this.params[k]) === 'date' || this.forcedRef) return;
+    const sub: Subintent = { type: 'fill_param', key: k };
+    const intent = paramIntent(k, this.params[k]);
+    // A remembered element answers without the search.
+    if (this.deps.memory && this.deps.getConfig().memory.enabled
+      && this.memKeys(sub, `param:${k}`).some((key) => this.deps.memory!.lookup(hostOf(model.url), this.assessCache?.out.pageKind ?? 'other', key))) return;
+    const args = this.groundArgs(sub, intent, model);
+    this.prefetch = { key: args.key, promise: groundByIntent(this.qctx(), model, args.intent, args.th, args.gctx).catch(() => null) };
+  }
+
   /**
    * Grounding with memory fast path, forced refs from answers, trials and escalation when unsure. `trial` in the
    * result means the step is reversible and has tries left: the caller verifies the effect and calls `trialFailed`
@@ -632,11 +667,9 @@ export class Task extends Emitter<TaskEvents> {
       this.forcedRef = null;
       if (el) return { el };
     }
-    const th = this.th();
-    const tried = this.rejected.get(subLabel) ?? [];
-    const trial = !!intent.trial && th.trial.enabled && tried.length < th.trial.tries;
-    intent = { ...intent, trial, exclude: [...(intent.exclude ?? []), ...tried.map((t) => t.sig)] };
-    const card = this.card(sub);
+    const args = this.groundArgs(sub, intent, model);
+    const { th, tried, trial, card } = args;
+    intent = args.intent;
     const host = hostOf(model.url);
     const pageKind = this.assessCache?.out.pageKind ?? 'other';
     if (memoryKey && this.deps.memory && this.deps.getConfig().memory.enabled) {
@@ -669,7 +702,10 @@ export class Task extends Emitter<TaskEvents> {
         this.deps.memory.recordFailure(hit.id);
       }
     }
-    const res = await groundByIntent(this.qctx(), model, intent, th, { goal: this.spec.goal, step: card, hints: hintsFor(this.hints, card), budgetTokens: this.budget() });
+    // A search started in parallel with this step's page assessment, for exactly this question, is used as is.
+    const pre = this.prefetch?.key === args.key ? await this.prefetch.promise : null;
+    this.prefetch = null;
+    const res = pre ?? await groundByIntent(this.qctx(), model, intent, th, args.gctx);
     if ((res.decision === 'act' || res.decision === 'try') && res.ref) {
       const el = model.elements.get(res.ref)!;
       if (memoryKey) this.memoryUse = { id: null, host, pageKind, key: this.memKeyFor(sub, memoryKey, el), sig: el.sig };
@@ -752,8 +788,9 @@ export class Task extends Emitter<TaskEvents> {
     let irreversible = risk.irreversible;
     const reasons = [...risk.reasons];
     if (!irreversible && askJev) {
-      const res = await runQuestions(this.qctx(), buildActionClass(el, model, this.spec.goal, this.budget()));
-      const cls = readActionClass(res.answers);
+      const pre = this.guardPrefetch?.key === `${model.signature}|${el.sig}` ? await this.guardPrefetch.promise : null;
+      this.guardPrefetch = null;
+      const cls = pre ?? readActionClass((await runQuestions(this.qctx(), buildActionClass(el, model, this.spec.goal, this.budget()))).answers);
       // Code rules catch payments, orders, publishing and deletion; JEV alone must be sure (sign-in and "next" are not).
       if (cls.pIrreversible >= 0.8) { irreversible = true; reasons.push(`JEV rates it irreversible (p=${cls.pIrreversible.toFixed(2)})`); }
     }
@@ -789,6 +826,7 @@ export class Task extends Emitter<TaskEvents> {
       return;
     }
 
+    this.startPrefetch(model);
     const t1 = this.now();
     const assess = await this.assess(model);
     timings.assess = this.now() - t1;
@@ -854,8 +892,12 @@ export class Task extends Emitter<TaskEvents> {
     if (!this.finished) this.deps.trace.saveCheckpoint(this.id, this.mask(this.checkpointData()));
   }
 
-  private async assess(model: Model): Promise<AssessOutput> {
-    if (this.assessCache?.sig === model.signature) return this.assessCache.out;
+  private async assess(model: Model, opts: { leads?: boolean } = {}): Promise<AssessOutput> {
+    // Dialogs our own click opened get "can the goal go on from here?" in the same call.
+    const goesOnRegions = model.regions.filter((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking
+      && this.openedByUs.has(r.sig) && !this.goesOn.has(r.sig)).map((r) => r.id);
+    const cached = this.assessCache?.sig === model.signature ? this.assessCache.out : null;
+    if (cached && (!opts.leads || cached.leads !== undefined) && goesOnRegions.every((id) => cached.goesOn[id] !== undefined)) return cached;
     const overlays = [
       ...model.regions.filter((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking),
       ...model.regions.filter((r) => r.kind === 'overlay' && !r.blocking && !this.dismissed.has(r.sig) && this.regionVisible(model, r)).slice(0, 2),
@@ -872,6 +914,8 @@ export class Task extends Emitter<TaskEvents> {
       })(),
       checkFormFit: Object.values(this.status).some((s) => s === 'pending')
         && [...model.elements.values()].some((e) => e.visible && e.interactive && ['textbox', 'combobox', 'select', 'radio'].includes(e.kind)),
+      checkLeads: opts.leads,
+      goesOnRegions,
     };
     const res = await runQuestions(this.qctx(), buildAssess(input));
     const out = readAssess(res.answers, input);
@@ -1615,8 +1659,9 @@ export class Task extends Emitter<TaskEvents> {
     if (kind === 'goal_step') return true;
     if (!this.openedByUs.has(r.sig) || (kind !== undefined && kind !== 'other' && kind !== 'promo')) return false;
     if (!this.goesOn.has(r.sig)) {
-      const res = await runQuestions(this.qctx(), buildGoesOn(model, r.id, this.spec.goal, hintsFor(this.hints), this.budget()));
-      this.goesOn.set(r.sig, gateNoul(noulOf(res.answers, 'goes_on'), this.th().assess.noul) !== 'no');
+      // Asked in the page assessment (one call); a cached assessment from before the dialog was noted asks again.
+      const v = a.goesOn[r.id] ?? (await this.assess(model)).goesOn[r.id];
+      this.goesOn.set(r.sig, v !== undefined && gateNoul(v, this.th().assess.noul) !== 'no');
     }
     return this.goesOn.get(r.sig)!;
   }
@@ -1640,10 +1685,13 @@ export class Task extends Emitter<TaskEvents> {
       || els.some((e) => e.hints?.includes('search') || (e.kind === 'button' && /search|find|поиск|найти|искать/i.test(e.name)));
   }
 
-  /** False only when JEV is sure the page does not lead toward the goal. */
+  /**
+   * False only when JEV is sure the page does not lead toward the goal. Asked in the page assessment, which the
+   * next step then reuses instead of assessing the same page again.
+   */
   private async leadsToGoal(model: Model): Promise<boolean> {
-    const res = await runQuestions(this.qctx(), buildLeads(model, this.spec.goal, hintsFor(this.hints), this.budget()));
-    return gateNoul(noulOf(res.answers, 'leads'), this.th().assess.noul) !== 'no';
+    const leads = (await this.assess(model, { leads: true })).leads;
+    return leads === undefined || gateNoul(leads, this.th().assess.noul) !== 'no';
   }
 
   /**
@@ -1921,6 +1969,18 @@ export class Task extends Emitter<TaskEvents> {
     };
     const dialog = model.regions.find((r) => (r.kind === 'dialog' || r.kind === 'overlay')
       && (r.blocking || this.goalStep(r, a)) && usable(r));
+    // The form's one submit button is nearly always the pick: its risk question runs while it is being grounded.
+    const scope = regionAndDescendants(model, dialog?.id ?? formRegion ?? 'r0');
+    const submits = [...model.elements.values()].filter((e) => e.attrs.type === 'submit' && e.visible && !e.occluded && !e.states.disabled
+      && (!(dialog?.id ?? formRegion) || scope.has(e.regionId)));
+    this.guardPrefetch = null;
+    if (submits.length === 1 && !deterministicRisk(submits[0], model).irreversible) {
+      const el = submits[0];
+      this.guardPrefetch = {
+        key: `${model.signature}|${el.sig}`,
+        promise: runQuestions(this.qctx(), buildActionClass(el, model, this.spec.goal, this.budget())).then((r) => readActionClass(r.answers)).catch(() => null),
+      };
+    }
     // Skipping is asked separately: as one more example in the main target it made JEV unsure about both.
     const g = await this.ground(sub, {
       target: 'the button that submits the form or goes on to its next step (such as Search, Show results, Next, Continue, Submit, Publish, Post or Pay)',

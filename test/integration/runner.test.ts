@@ -103,7 +103,7 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
         out[id] = { type: 'choice', choice: k, probabilities: { [k]: 1 }, confidence: 1 };
       } else if (q.type === 'noul') {
         let v = 0.05;
-        if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same' || id === 'goal_is_search' || id === 'leads' || id === 'goes_on' || id.startsWith('param_here_')) v = 0.95;
+        if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same' || id === 'goal_is_search' || id === 'leads' || id.startsWith('goes_on') || id.startsWith('param_here_')) v = 0.95;
         if (id === 'goal_reached') v = s.goalReached?.(req) ?? 0.05;
         if (s.nouls?.[id] !== undefined) v = s.nouls[id];
         const fn = s.noulFn?.(id, req);
@@ -145,6 +145,16 @@ describe('Task runner (scripted JEV, real browser)', () => {
     for (const f of readdirSync(join(dir, 'blobs')).flatMap((d) => readdirSync(join(dir, 'blobs', d)).map((x) => join(dir, 'blobs', d, x)))) {
       expect(readFileSync(f).toString('latin1')).not.toContain('Hunter2-secret');
     }
+    // The password field was searched for while the page after the email was assessed, and only once.
+    const grounds = trace.getJevCalls({ taskId: task.id, template: 'ground.element' });
+    const targets = grounds.map((c) => String((c.state as any)?.intent?.target ?? ''));
+    expect(targets.filter((t) => /password/i.test(t))).toHaveLength(1);
+    const steps = trace.getSteps(task.id);
+    const pwStep = steps.find((st) => st.subintent === 'fill_param(password)')!;
+    const pwCall = grounds.find((c) => /password/i.test(String((c.state as any)?.intent?.target ?? '')))!;
+    const assessOfPw = trace.getJevCalls({ taskId: task.id, template: 'assess' }).find((c) => c.stepId === pwStep.id)!;
+    expect(pwCall.stepId).toBe(pwStep.id);
+    expect(pwCall.at).toBeLessThanOrEqual(assessOfPw.at + 50);
   });
 
   it('escalates an uncertain grounding with candidates and resumes on pick', async () => {

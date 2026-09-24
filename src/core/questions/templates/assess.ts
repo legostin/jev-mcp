@@ -46,6 +46,10 @@ export interface AssessInput {
   /** Pending params to check for a field on this page (one batched noul each: absent ones are skipped without grounding). */
   pendingParams?: string[];
   budgetTokens: number;
+  /** A way in was just taken: does this page lead toward the goal? (asked in the same call) */
+  checkLeads?: boolean;
+  /** Dialogs the task's own click opened that may be a step of the goal: can the goal go on from them? */
+  goesOnRegions?: string[];
 }
 
 export interface AssessOutput {
@@ -62,7 +66,24 @@ export interface AssessOutput {
   formServesGoal: number;
   /** Per pending param: is there a control on this page to set it? */
   paramHere: Record<string, number>;
+  /** Asked with `checkLeads` only. */
+  leads?: number;
+  /** Per region in `goesOnRegions`. */
+  goesOn: Record<string, number>;
 }
+
+/**
+ * After a way in was taken: does the page lead toward the goal? A clear "no" (the new-ad form when the goal is
+ * about an existing ad: 0.12) is rolled back; the right section scores 0.85-0.95.
+ */
+export const LEADS_QUESTION = 'Does `page` lead toward `goal`: is it where `goal` is done, or a step on the way there?';
+
+/**
+ * A dialog the task's own click opened that JEV called "other" or "promo": can the goal go on from it? A price
+ * notice with "Continue to payment" scores 0.55-0.6, a newsletter offer 0.05-0.15.
+ */
+export const goesOnQuestion = (regionId: string) =>
+  `Can \`goal\` go on from \`page.regions.${regionId}\`: does it offer a way to pay, continue or confirm what \`goal\` asks for?`;
 
 /** Elements that best summarise a page for page-level judgments: headings, visible text and controls in view. */
 export function summaryRefs(model: PageModel, limit = 120): string[] {
@@ -100,6 +121,8 @@ export function buildAssess(input: AssessInput): QuestionSet {
   for (const k of input.uncertainParams) {
     questions[`param_reflected_${k}`] = { type: 'noul', instructions: `Is \`params.${k}.value\` currently entered or selected on the page?` };
   }
+  if (input.checkLeads) questions.leads = { type: 'noul', instructions: LEADS_QUESTION };
+  for (const id of input.goesOnRegions ?? []) questions[`goes_on_${id}`] = { type: 'noul', instructions: goesOnQuestion(id) };
   const required: Record<string, string> = {};
   for (const e of input.requiredEmpty.slice(0, 8)) {
     required[e.ref] = describeElement(e, { pageUrl: model.url });
@@ -114,31 +137,6 @@ export function buildAssess(input: AssessInput): QuestionSet {
     extra: Object.keys(required).length ? { required_fields: required as unknown as Json } : undefined,
   }, input.budgetTokens);
   return { template: 'assess', state, questions };
-}
-
-/**
- * After a way in was taken: does the page it opened lead toward the goal? Clear "no" (the new-ad form when the
- * goal is about an existing ad: 0.12) is rolled back; the right section scores 0.85-0.95.
- */
-export function buildLeads(model: PageModel, goal: string, hints: string[], budgetTokens: number): QuestionSet {
-  const state = buildState({
-    goal, hints, page: { url: model.url, title: model.title, regions: regionLines(model), elements: elementLines(model, summaryRefs(model)) },
-  }, budgetTokens);
-  return { template: 'assess.leads', state, questions: { leads: { type: 'noul', instructions: 'Does `page` lead toward `goal`: is it where `goal` is done, or a step on the way there?' } } };
-}
-
-/**
- * A dialog the task's own click opened that JEV called "other" or "promo": can the goal go on from it? A price
- * notice with "Continue to payment" scores 0.55-0.6, a newsletter offer 0.05-0.15.
- */
-export function buildGoesOn(model: PageModel, regionId: string, goal: string, hints: string[], budgetTokens: number): QuestionSet {
-  const state = buildState({
-    goal, hints, page: { url: model.url, title: model.title, regions: regionLines(model), elements: elementLines(model, summaryRefs(model)) },
-  }, budgetTokens);
-  return {
-    template: 'assess.goes_on', state,
-    questions: { goes_on: { type: 'noul', instructions: `Can \`goal\` go on from \`page.regions.${regionId}\`: does it offer a way to pay, continue or confirm what \`goal\` asks for?` } },
-  };
 }
 
 export function readAssess(answers: Record<string, Answer>, input: AssessInput): AssessOutput {
@@ -165,5 +163,7 @@ export function readAssess(answers: Record<string, Answer>, input: AssessInput):
     // The form fails the goal when it searches existing items and the goal is not a search.
     formServesGoal: input.checkFormFit ? 1 - noulOf(answers, 'form_is_search') * (1 - noulOf(answers, 'goal_is_search')) : 1,
     paramHere: Object.fromEntries((input.pendingParams ?? []).map((k) => [k, noulOf(answers, `param_here_${k}`)])),
+    leads: input.checkLeads ? noulOf(answers, 'leads') : undefined,
+    goesOn: Object.fromEntries((input.goesOnRegions ?? []).map((id) => [id, noulOf(answers, `goes_on_${id}`)])),
   };
 }

@@ -164,6 +164,7 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     const trace = await client.call('task.trace', { task_id: created.task_id });
     for (const s of trace.steps) console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''}`);
     for (const q of questions) console.log(`question ${q.kind}: ${q.summary}`);
+    if (process.env.JEV_TIMINGS) for (const s of trace.steps) console.log(`timing ${s.idx} ${s.subintent} ${JSON.stringify(s.timings)} ${(s.calls ?? []).map((c: any) => `${c.template}:${c.latencyMs ?? c.latency_ms ?? '?'}`).join(',')}`);
     expect(result.status).toBe('done');
     expect(trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ')).toMatch(/goal reached/);
     // The payment dialog is part of the goal: never dismissed, the saved card is chosen, "Pay" is confirmed.
