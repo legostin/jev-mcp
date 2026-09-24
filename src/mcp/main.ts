@@ -4,24 +4,10 @@ import { DaemonBridge } from './client.ts';
 import { registerPageTools, type ToolDeps, type ToolResult } from './tools.ts';
 import { registerTaskTools, formatQuestion, formatResult } from './task-tools.ts';
 import { VERSION } from '../daemon/main.ts';
+import { INSTRUCTIONS } from './instructions.ts';
+import { toolsFingerprint } from './fingerprint.ts';
 
-export const INSTRUCTIONS = [
-  'jev-browser drives a real Chrome browser with JEV, a fast decision model (TypeSafe System One). JEV does not write text or plan:',
-  'you plan and supply the data; JEV finds elements, reads page state and verifies steps in ~100 ms per decision.',
-  'Prefer jev_task for multi-step goals: goal, about and hints in English, param values exactly as the site shows them, dates as',
-  'YYYY-MM-DD or {from,to}, secrets as params with secret:true, and result {select: "min(price)"} when the task should end on results:',
-  'JEV sorts on the site and hands you the results list (one line per item); you read it and pick the answer yourself.',
-  'The task runs in the background (consent banners, prefilled fields, autocompletes, date pickers, results in new tabs are handled);',
-  'reversible steps (fields, filter chips, dropdowns, pickers, sorting) try the best candidate even at low confidence, verify the effect and',
-  'roll back before trying the next (policy.confidence.trial); when that runs out, or before anything irreversible, JEV asks you a question',
-  'instead of guessing. Questions arrive as <channel source="jev-browser" task_id=… question_id=…>',
-  'events (Claude Code with channels), as "JEV is waiting for your answer" blocks appended to every jev tool result, and through jev_wait.',
-  'In Claude Code, run `jev watch <task_id>` in the background after starting a task: it exits on the next question or when the task ends.',
-  'Answer with jev_answer. Blocker questions (CAPTCHA, login wall) need a person: ask the user to solve it in the browser, then answer',
-  '"continue"; if the tab is headless, abort and rerun with driver "extension" (the user\'s Chrome). Confirm risk_confirm questions only if',
-  'the user asked for that action. For direct control use jev_observe (compact page view), jev_find (JEV-ranked search), jev_ask',
-  '(your own typed questions) and jev_act. Setup problems: jev_doctor.',
-].join(' ');
+export { INSTRUCTIONS };
 
 export async function runMcpServer(): Promise<void> {
   const bridge = new DaemonBridge();
@@ -32,6 +18,13 @@ export async function runMcpServer(): Promise<void> {
   const deps: ToolDeps = { bridge, decorate: async (r: ToolResult) => r };
   registerPageTools(server, deps);
   registerTaskTools(server, deps);
+  // The tools the agent got from this process: a daemon on newer code reports different ones.
+  bridge.own = { tools: toolsFingerprint(), startedAt: Date.now() };
+  const withQuestions = deps.decorate;
+  deps.decorate = async (r: ToolResult) => {
+    const out = await withQuestions(r);
+    return bridge.notice ? { ...out, content: [...out.content, { type: 'text', text: `\n--- ${bridge.notice} ---` }] } : out;
+  };
   // Claude Code channels: push questions and results into the session (ignored by clients without channel support).
   let initialized = false;
   const push = (content: string, meta: Record<string, string>) => {

@@ -21,6 +21,8 @@ export class RpcServer {
   private handlers = new Map<string, Handler>();
   readonly connections = new Set<Connection>();
   private seq = 0;
+  /** Requests being handled right now (a restart waits for none). */
+  inFlight = 0;
   onDisconnect: (conn: Connection) => void = () => {};
   onActivity: () => void = () => {};
 
@@ -70,6 +72,7 @@ export class RpcServer {
     };
     const handler = this.handlers.get(req.method);
     if (!handler) return reply({ error: { code: ERR.methodNotFound, message: `Unknown method ${req.method}` } });
+    this.inFlight++;
     try {
       const result = await handler(req.params ?? {}, conn);
       reply({ result: result ?? null });
@@ -78,6 +81,8 @@ export class RpcServer {
       const err = e as Error & { kind?: string };
       log.warn(`${req.method} failed: ${err.message}`);
       reply({ error: { code: err.kind ? ERR.jev : ERR.internal, message: err.message, data: err.kind ? { kind: err.kind } : undefined } });
+    } finally {
+      this.inFlight--;
     }
   }
 

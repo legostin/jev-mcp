@@ -36,6 +36,8 @@ describe('MCP server', () => {
     const tools = (await client.listTools()).tools.map((t) => t.name);
     for (const t of ['jev_observe', 'jev_find', 'jev_ask', 'jev_act', 'jev_tabs', 'jev_screenshot', 'jev_settings', 'jev_doctor']) expect(tools).toContain(t);
     expect(client.getInstructions()).toMatch(/JEV/);
+    // A daemon started on the same code reports the same tools: no restart notice.
+    expect(textOf(await client.callTool({ name: 'jev_tabs', arguments: {} }))).not.toMatch(/restart|older/);
     expect(client.getServerCapabilities()?.experimental).toHaveProperty('claude/channel');
   });
 

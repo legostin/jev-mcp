@@ -1,4 +1,7 @@
 /** Newline-delimited JSON-RPC 2.0 between the daemon and its clients (MCP proxies, CLI). */
+
+/** Bumped when a daemon method changes incompatibly: a client speaking another version is told to restart. */
+export const PROTOCOL_VERSION = 1;
 export interface RpcRequest { jsonrpc: '2.0'; id: number; method: string; params?: unknown }
 export interface RpcResponse { jsonrpc: '2.0'; id: number; result?: unknown; error?: RpcErrorBody }
 export interface RpcNotification { jsonrpc: '2.0'; method: string; params?: unknown }

@@ -54,7 +54,7 @@ export async function main(argv: string[]): Promise<void> {
       case 'daemon': {
         const { startDaemon } = await import('../daemon/main.ts');
         const { registerStage2 } = await import('../daemon/extend.ts');
-        const handle = await startDaemon({ logToStderr: args.includes('--foreground') });
+        const handle = await startDaemon({ logToStderr: args.includes('--foreground'), reloadOnChange: true });
         await registerStage2(handle);
         return;
       }

@@ -98,8 +98,9 @@ export class TaskManager {
     }
   }
 
+  /** Tasks at work or waiting for an answer. Interrupted ones are saved and come back after a restart. */
   busy(): boolean {
-    return [...this.tasks.values()].some((t) => !t.finished);
+    return [...this.tasks.values()].some((t) => !t.finished && t.state !== 'interrupted');
   }
 
   private publish(task: Task, type: TaskEventType, payload: unknown): void {

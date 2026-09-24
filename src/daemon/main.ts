@@ -12,6 +12,8 @@ import { TraceStore } from '../core/trace/store.ts';
 import { socketPath, logFile } from '../core/util/paths.ts';
 import { configureLog, logger } from '../core/util/log.ts';
 import { newId } from '../core/util/ids.ts';
+import { PROTOCOL_VERSION } from './protocol.ts';
+import { codeFingerprint, toolsFingerprint } from '../mcp/fingerprint.ts';
 
 const log = logger('daemon');
 
@@ -29,7 +31,11 @@ export interface DaemonHandle {
 
 export interface Session { id: string; client: string; pid?: number; createdAt: number; connected: boolean }
 
-export async function startDaemon(opts: { logToStderr?: boolean } = {}): Promise<DaemonHandle> {
+export async function startDaemon(opts: {
+  logToStderr?: boolean;
+  /** A standalone daemon restarts itself on new code when nothing is running (never set in-process, e.g. tests). */
+  reloadOnChange?: boolean;
+} = {}): Promise<DaemonHandle> {
   if (!opts.logToStderr) configureLog({ file: logFile() });
   const release = acquireLock();
   let cfg: Config = loadConfig();
@@ -56,12 +62,14 @@ export async function startDaemon(opts: { logToStderr?: boolean } = {}): Promise
     extras: { sessions: () => sessions.size },
   };
 
-  rpc.register('session.hello', (p: { client?: string; pid?: number; sessionId?: string }, conn) => {
-    const id = p.sessionId && sessions.has(p.sessionId) ? p.sessionId : newId('s');
+  rpc.register('session.hello', (p: { client?: string; pid?: number; sessionId?: string; protocol?: number }, conn) => {
+    // A client reconnecting after a daemon restart keeps its session: tasks it started stay its own.
+    const id = p.sessionId && p.sessionId.length <= 64 ? p.sessionId : newId('s');
     sessions.set(id, { id, client: p.client ?? 'unknown', pid: p.pid, createdAt: sessions.get(id)?.createdAt ?? Date.now(), connected: true });
     conn.sessionId = id;
     conn.client = p.client ?? 'unknown';
-    return { sessionId: id, version: VERSION };
+    // What the agent should see now (tool list and instructions of this code): an MCP server started earlier compares.
+    return { sessionId: id, version: VERSION, protocol: PROTOCOL_VERSION, tools: toolsFingerprint(), startedAt: ctx.startedAt };
   });
   registerPageApi(rpc, ctx);
 
@@ -106,6 +114,21 @@ export async function startDaemon(opts: { logToStderr?: boolean } = {}): Promise
     },
   };
   for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => { void handle.close().then(() => process.exit(0)); });
+  if (opts.reloadOnChange) {
+    // New code on disk (an update, a rebuild): restart when idle; the next client call starts the new daemon, and
+    // interrupted tasks are restored there.
+    const started = codeFingerprint();
+    const reload = setInterval(() => {
+      if (busy.some((b) => b()) || rpc.inFlight > 0) return;
+      let now: string;
+      try { now = codeFingerprint(); } catch { return; }
+      if (now === started) return;
+      clearInterval(reload);
+      log.info('the code changed on disk; restarting to load it');
+      void handle.close().then(() => process.exit(0));
+    }, Number(process.env.JEV_RELOAD_CHECK_MS ?? 30_000));
+    reload.unref();
+  }
   rpc.register('daemon.stop', () => { setTimeout(() => { void handle.close().then(() => process.exit(0)); }, 50); return { stopping: true }; });
   return handle;
 }
