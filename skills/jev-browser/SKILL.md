@@ -47,7 +47,8 @@ JEV is a *System One* model. It makes typed decisions (which element, which opti
 - Credentials go into params with `"secret": true`. JEV never sees those values. Never put secrets in goal or hints.
 - `result` makes the task end on the results. With `select: "min(price)"` or `"max(stars)"` JEV first sorts the list on the site. Then **you get the results list**: one line per item (title, price, short texts, link). Read it and pick the answer yourself: skip accessories, spare parts, sponsored or unrelated items, and report the chosen item with its link. `result.pages` (default 1) reads more pages or "show more" loads first.
 - `result.extract: "code"` parses items in code by `result.schema` (field types: string, number, money, datetime, date, time, duration, url, boolean) and applies `select`. Use it for bulk collection over many pages, where the text list would be too long.
-- Useful `policy` fields: `confidence` (see below), `irreversible: "ask" | "allow"`, `allowed_domains`, `max_steps`, `budget_usd`, `max_items`.
+- Useful `policy` fields: `confidence` (see below), `irreversible: "ask" | "allow"`, `allowed_domains`, `max_steps`, `budget_usd`, `max_items`, and `fill_required: "any"` when any option is fine for required choices you give no param for (body type, colour, trim): JEV then picks the option that fits the goal and hints (e.g. the saved card), else the first. Text fields and consents are still asked.
+- For forms (posting, booking, sign-up) give the goal and the details as params; the task finds the way in ("Post an ad", "Sell"), walks multi-step forms and skips optional steps. For long flows you can also split the work: one task to sign in, another to fill the form.
 - The task handles common site behaviour on its own:
   - consent banners;
   - fields the site prefilled;
@@ -77,6 +78,8 @@ Answer with `jev_answer`. Look first (`jev_observe`, `jev_screenshot`) when the 
 | `blocker`: site keeps showing errors | A reload and a step back did not help: the site may be limiting automated browsing. Retry later, or `abort` and rerun with `driver: "extension"`. |
 | `assess`: the search found nothing | `set_param` with a broader value, give a `hint`, or `continue` to read the page anyway. |
 | `stuck` | Observe or take a screenshot, then send a `hint`; or act yourself with `jev_act` and answer `continue`; or `abort` |
+
+A task shown as `interrupted` (after a daemon restart or an update) keeps its progress: `jev_control resume` continues it in a tab at its last address. A task paused with `user_takeover` means the user is working in the tab: leave it until they resume it (side panel) or ask them.
 
 Do not answer `continue` to a blocker you have not resolved: the task will only ask again.
 
