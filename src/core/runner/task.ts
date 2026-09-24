@@ -187,6 +187,8 @@ export class Task extends Emitter<TaskEvents> {
   private enteredVia = new Set<string>();
   /** Pages a way in was taken from: links back to them lead away from the goal. */
   private enteredFrom = new Set<string>();
+  /** Dialogs that opened on the same page in answer to the task's own click (signatures). */
+  private openedByUs = new Set<string>();
   /** Choice groups already given "any" value. */
   private anyGroups = new Set<string>();
   private errorPages = 0;
@@ -918,7 +920,7 @@ export class Task extends Emitter<TaskEvents> {
     for (const r of blocking) {
       const kind = a.overlays[r.id]?.kind ?? 'other';
       // A dialog that is part of the goal (pay, choose a plan or card, confirm) is worked through, not closed.
-      if (kind === 'goal_step') continue;
+      if (this.goalStep(r, a)) continue;
       if (kind === 'captcha') {
         return { type: 'blocker', kind: 'captcha', summary: 'The site shows a CAPTCHA / bot check. Solve it in the browser (or ask the user to), then answer "continue".' };
       }
@@ -947,7 +949,7 @@ export class Task extends Emitter<TaskEvents> {
     // A param counts as pending while it can still be filled here, or revealed behind "more filters".
     const pendingKeys = Object.keys(this.params).filter((k) => (this.status[k] === 'pending' || this.status[k] === 'typed')
       && (this.absentOn[k] !== model.signature || !this.revealTried.has(k)));
-    const goalDialog = model.regions.some((r) => (r.kind === 'dialog' || r.kind === 'overlay') && r.blocking && a.overlays[r.id]?.kind === 'goal_step');
+    const goalDialog = model.regions.some((r) => (r.kind === 'dialog' || r.kind === 'overlay') && r.blocking && this.goalStep(r, a));
     const hasForm = model.regions.some((r) => r.kind === 'form') || goalDialog;
     // After a search, filters that moved the page to a new address were applied by the site: no second submit.
     if (this.dirty && this.submitsDone > 0 && this.lastSubmitUrl && model.url !== this.lastSubmitUrl) this.dirty = false;
@@ -1530,6 +1532,7 @@ export class Task extends Emitter<TaskEvents> {
     await this.click(g.el);
     await this.settle();
     const after = await this.observe(false);
+    this.noteOpened(before, after);
     if (g.trial && !hadEffect(before, after, g.el)) return failed(g.el, 'nothing opened');
     const opened = `opened ${g.el.ref} "${g.el.name}"`;
     // An opener ("Account ▾") shows a menu: the way in is one of its items.
@@ -1558,6 +1561,7 @@ export class Task extends Emitter<TaskEvents> {
     await this.click(item.el);
     await this.settle();
     const landed = await this.observe(false);
+    this.noteOpened(after, landed);
     if (item.trial && !hadEffect(after, landed, item.el)) return failed(item.el, 'the menu item did nothing');
     if (!(await this.leadsToGoal(landed))) return failed(item.el, 'the page it opened does not lead to the goal');
     this.enteredVia.add(g.el.sig);
@@ -1565,6 +1569,24 @@ export class Task extends Emitter<TaskEvents> {
     if (landed.url !== model.url) this.enteredFrom.add(pageAddress(model.url, model.url));
     this.settleGrounding(true);
     return { outcome: 'ok', note: `${opened} and chose "${item.el.name}" to get where the goal is done`, action: { type: 'click', ref: item.el.ref } };
+  }
+
+  /**
+   * A dialog that is a step of the goal: JEV says so, or it opened in answer to the task's own click on the same
+   * page and JEV names no obstacle in it (a "limit reached, pay to publish" notice read as "other").
+   */
+  private goalStep(r: Region, a: AssessOutput): boolean {
+    const kind = a.overlays[r.id]?.kind;
+    return kind === 'goal_step' || (this.openedByUs.has(r.sig) && (kind === undefined || kind === 'other'));
+  }
+
+  /** Remembers blocking dialogs the click between two page states opened without leaving the page. */
+  private noteOpened(before: Model, after: Model): void {
+    if (after.url !== before.url) return;
+    for (const id of diffModels(before, after).newRegions) {
+      const r = after.regions.find((x) => x.id === id);
+      if (r && (r.kind === 'dialog' || r.kind === 'overlay') && r.blocking) this.openedByUs.add(r.sig);
+    }
   }
 
   /** A one-field search box (the site's or a list's search): not a form a goal is worked through. */
@@ -1851,7 +1873,7 @@ export class Task extends Emitter<TaskEvents> {
       return [...model.elements.values()].some((e) => ids.has(e.regionId) && e.visible && e.inViewport && e.interactive && !e.occluded && !e.states.disabled);
     };
     const dialog = model.regions.find((r) => (r.kind === 'dialog' || r.kind === 'overlay')
-      && (r.blocking || a.overlays[r.id]?.kind === 'goal_step') && usable(r));
+      && (r.blocking || this.goalStep(r, a)) && usable(r));
     // Skipping is asked separately: as one more example in the main target it made JEV unsure about both.
     const g = await this.ground(sub, {
       target: 'the button that submits the form or goes on to its next step (such as Search, Show results, Next, Continue, Submit, Publish, Post or Pay)',
@@ -1880,6 +1902,7 @@ export class Task extends Emitter<TaskEvents> {
       return { outcome: 'ok', note: `clicked submit ${g.el.ref} "${g.el.name}"; ${switched}`, action: { type: 'click', ref: g.el.ref } };
     }
     const after = await this.observe(false);
+    this.noteOpened(model, after);
     this.lastSubmitUrl = after.url;
     const diff = diffModels(model, after);
     const newRegions = diff.newRegions.map((id) => after.regions.find((r) => r.id === id)).filter(Boolean) as Region[];

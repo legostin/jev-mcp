@@ -29,7 +29,7 @@
   <button type="button" id="cab" aria-haspopup="menu" aria-expanded="false">Кабинет ▾</button>
   <a href="post.html">Подать объявление</a>
   <nav class="menu" id="menu" role="menu">
-    <a role="menuitem" href="account.html?view=ads">Мои объявления</a>
+    <a role="menuitem" id="myads" href="account.html?view=ads">Мои объявления</a>
     <a role="menuitem" href="#" onclick="return false">Мои платежи</a>
     <a role="menuitem" href="#" onclick="return false">Настройки</a>
     <a role="menuitem" href="#" onclick="return false">Выйти</a>
@@ -40,6 +40,7 @@
 const q = new URLSearchParams(location.search);
 const main = document.getElementById('main');
 const cab = document.getElementById('cab');
+if (q.get('notice')) for (const a of document.querySelectorAll('a[href^="account.html"]')) a.href += (a.href.includes('?') ? '&' : '?') + 'notice=1';
 cab.onclick = () => {
   const m = document.getElementById('menu');
   m.classList.toggle('open');
@@ -50,16 +51,20 @@ if (q.get('view') === 'ads') {
   main.innerHTML = `<h1>Мои объявления</h1>
     <div class="tabs">
       <a href="account.html?view=ads&tab=active" class="${tab === 'active' ? 'on' : ''}">Активные (2)</a>
-      <a href="account.html?view=ads&tab=unpaid" class="${tab === 'unpaid' ? 'on' : ''}">Неоплаченные (1)</a>
+      <a href="account.html?view=ads&tab=unpaid${q.get('notice') ? '&notice=1' : ''}" class="${tab === 'unpaid' ? 'on' : ''}">Неоплаченные (1)</a>
       <a href="account.html?view=ads&tab=archive" class="${tab === 'archive' ? 'on' : ''}">Архив</a>
     </div>
     <form class="list-search" onsubmit="return false"><input type="text" placeholder="Поиск по объявлениям" aria-label="Поиск"> <button>Искать</button></form>
     <div id="list"></div><p id="done"></p>`;
   const list = document.getElementById('list');
   if (tab === 'unpaid') {
-    list.innerHTML = `<div class="ad"><div><b>Toyota Camry, 2015</b><br>5 000 000 ₸ · Алматы · ожидает оплаты</div>
-      <button type="button" class="primary" id="payad">Оплатить публикацию</button></div>`;
-    document.getElementById('payad').onclick = () => {
+    // Paying goes through a notice first (?notice=1): it only explains the price and offers to go on.
+    list.innerHTML = q.get('notice')
+      ? `<div class="ad"><div><b>Toyota Camry, 2015</b><br>5 000 000 ₸ · Алматы<br>Объявление появится на сайте после оплаты размещения.</div>
+        <button type="button" id="payad">Размещение на 7 дней от 480 ₸</button><button type="button">Удалить</button></div>`
+      : `<div class="ad"><div><b>Toyota Camry, 2015</b><br>5 000 000 ₸ · Алматы · ожидает оплаты</div>
+        <button type="button" class="primary" id="payad">Оплатить публикацию</button></div>`;
+    const openPayment = () => {
       const back = document.createElement('div');
       back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20';
       back.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Оплата публикации" style="position:fixed;left:50%;top:30%;transform:translateX(-50%);background:#fff;padding:20px;border-radius:12px;width:380px">
@@ -78,13 +83,26 @@ if (q.get('view') === 'ads') {
         back.remove();
         list.innerHTML = '';
         if (pay.value === 'saved') {
-          document.querySelector('a[href$="tab=unpaid"]').textContent = 'Неоплаченные (0)';
-          document.querySelector('a[href$="tab=active"]').textContent = 'Активные (3)';
+          document.querySelector('a[href*="tab=unpaid"]').textContent = 'Неоплаченные (0)';
+          document.querySelector('a[href*="tab=active"]').textContent = 'Активные (3)';
         }
         document.getElementById('done').textContent = pay.value === 'saved'
           ? 'Объявление Toyota Camry, 2015 оплачено сохранённой картой •••• 4242 и опубликовано'
           : 'Введите данные новой карты';
       };
+    };
+    document.getElementById('payad').onclick = () => {
+      if (!q.get('notice')) return openPayment();
+      const note = document.createElement('div');
+      note.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20';
+      note.innerHTML = `<div style="position:fixed;left:50%;top:30%;transform:translateX(-50%);background:#fff;padding:20px;border-radius:12px;width:380px">
+        <button type="button" id="noteclose" style="position:absolute;right:10px;top:8px">Закрыть</button>
+        <h3>Бесплатные размещения закончились</h3>
+        <p>В этом месяце вы уже разместили три объявления бесплатно.</p>
+        <button type="button" id="notego" class="primary">Продолжить с оплатой 750 ₸</button> <button type="button">Подробнее</button></div>`;
+      document.body.appendChild(note);
+      document.getElementById('noteclose').onclick = () => note.remove();
+      document.getElementById('notego').onclick = () => { note.remove(); openPayment(); };
     };
   } else if (tab === 'active') {
     list.innerHTML = `<div class="ad"><div><b>Hyundai Accent, 2018</b><br>6 200 000 ₸ · Астана</div><a href="#" onclick="return false">Поднять в топ</a></div>

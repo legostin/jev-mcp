@@ -349,4 +349,23 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(notes).toMatch(/"Кабинет ▾" and chose "Мои объявления"/);
     expect(await page.evaluate('location.search')).toBe('?view=ads');
   });
+  it('keeps a dialog its own click opened even when JEV calls it "other", and goes on inside it', async () => {
+    const page = await h.open('account.html?view=ads&tab=unpaid&notice=1');
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [[/leads toward doing/i, /Размещение на 7 дней/], [/submits the form/i, /Продолжить с оплатой|Оплатить 1 500/]],
+      choices: [[/^overlay_kind_/, 'other']],
+      option: /Сохранённая/,
+      goalReached: (req) => (JSON.stringify(req.state).includes('оплачено') ? 0.95 : 0.05),
+    });
+    const task = makeTask({ goal: 'Pay for the placement of my unpaid ad with the saved bank card', policy: { fill_required: 'any' } }, page, jev);
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: q.kind === 'risk_confirm' ? 'continue' : 'abort' }), 10); });
+    await task.start();
+    const steps = trace.getSteps(task.id);
+    expect(questions.every((q) => q.kind === 'risk_confirm')).toBe(true);
+    expect(steps.some((st) => /dismiss_overlay/.test(st.subintent ?? ''))).toBe(false);
+    expect(await page.evaluate('document.getElementById("done").textContent')).toMatch(/оплачено сохранённой картой/);
+    expect(task.state).toBe('done');
+  });
 });

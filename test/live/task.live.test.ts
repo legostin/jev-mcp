@@ -123,10 +123,10 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(questions).toHaveLength(0);
   }, 300_000);
 
-  it('opens the account from a page without a form and pays for an unpaid ad', async () => {
+  it.each([['', 'straight to payment'], ['?notice=1', 'through a price notice']])('opens the account from a page without a form and pays for an unpaid ad (%s: %s)', async (query) => {
     const created = await client.call('task.create', {
       goal: 'Pay for the publication of my car ad (Toyota Camry, 2015) that is already posted but unpaid: find it among my unpaid ads in the account and pay with the saved bank card',
-      site: fixtures.url('account.html'),
+      site: fixtures.url(`account.html${query}`),
       // Already signed in: the sign-in params are never needed on this path.
       params: { phone: { value: '7000000000', about: 'phone number used to sign in' }, password: { value: 'x', about: 'account password', secret: true } },
       hints: ['The ad already exists and waits for payment: do not post a new ad.', 'Pay with the saved bank card that is already linked to the account.'],
