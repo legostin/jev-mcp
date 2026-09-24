@@ -78,10 +78,9 @@ export function buildAssess(input: AssessInput): QuestionSet {
     validation_error: { type: 'noul', instructions: 'Does `page` show an error or validation message about entered data?' },
   };
   if (input.checkFormFit) {
-    questions.form_serves_goal = {
-      type: 'noul',
-      instructions: 'Is the form on `page` a step towards `goal` (such as signing in, choosing a category, entering the details or searching when `goal` is a search), rather than an unrelated form (for example a site search when `goal` is to post, create or edit something)?',
-    };
+    // Two plain judgments instead of one about "fit": a search form is wrong only when the goal is not a search.
+    questions.goal_is_search = { type: 'noul', instructions: 'Does `goal` ask to find, search, browse or compare existing items or offers?' };
+    questions.form_is_search = { type: 'noul', instructions: 'Is the main form on `page` a search or a filter over existing items or offers (not a form that creates, posts, books or signs in)?' };
   }
   for (const k of input.pendingParams ?? []) {
     questions[`param_here_${k}`] = { type: 'noul', instructions: `Does \`page\` show a field, list, option or button where \`params.${k}\` can be set?` };
@@ -132,7 +131,8 @@ export function readAssess(answers: Record<string, Answer>, input: AssessInput):
     validationError: noulOf(answers, 'validation_error'),
     paramReflected,
     requiredUncovered,
-    formServesGoal: input.checkFormFit ? noulOf(answers, 'form_serves_goal') : 1,
+    // The form fails the goal when it searches existing items and the goal is not a search.
+    formServesGoal: input.checkFormFit ? 1 - noulOf(answers, 'form_is_search') * (1 - noulOf(answers, 'goal_is_search')) : 1,
     paramHere: Object.fromEntries((input.pendingParams ?? []).map((k) => [k, noulOf(answers, `param_here_${k}`)])),
   };
 }
