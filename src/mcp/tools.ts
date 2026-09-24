@@ -20,8 +20,31 @@ export interface ToolDeps {
 export function text(t: string): ToolResult { return { content: [{ type: 'text', text: t }] }; }
 export function errorResult(t: string): ToolResult { return { content: [{ type: 'text', text: t }], isError: true }; }
 
-/** Wraps a handler: daemon/JEV errors become readable tool errors, and pending questions are appended. */
-export function wrap<A>(deps: ToolDeps, fn: (args: A) => Promise<ToolResult>) {
+export const DEFAULT_OUTPUT_TOKENS = 8000;
+
+/** Cuts the text of a result to about `tokens` (images are kept), saying how much was left out. */
+export function budgetResult(res: ToolResult, tokens: number): ToolResult {
+  let left = Math.floor(tokens * 3.5);
+  let cut = 0;
+  const content = res.content.map((c) => {
+    if (c.type !== 'text') return c;
+    if (c.text.length <= left) { left -= c.text.length; return c; }
+    cut += c.text.length - Math.max(0, left);
+    const kept = c.text.slice(0, Math.max(0, left));
+    left = 0;
+    return { ...c, text: kept };
+  }).filter((c) => c.type !== 'text' || c.text.length > 0);
+  if (!cut) return res;
+  const note = `\n…[cut: about ${Math.ceil(cut / 3.5)} more tokens. Ask for less: one region or element, a smaller view, or fewer items]`;
+  return { ...res, content: [...content, { type: 'text', text: note }] };
+}
+
+/**
+ * Wraps a handler: daemon/JEV errors become readable tool errors, the output keeps to its token budget (the
+ * daemon's privacy.outputTokens, or more when the call asked for a larger budget), and pending questions are
+ * appended.
+ */
+export function wrap<A>(deps: ToolDeps, fn: (args: A) => Promise<ToolResult>, asked?: (args: A) => number | undefined) {
   return async (args: A): Promise<ToolResult> => {
     let res: ToolResult;
     try { res = await fn(args); } catch (e) {
@@ -29,7 +52,8 @@ export function wrap<A>(deps: ToolDeps, fn: (args: A) => Promise<ToolResult>) {
       const kind = err.data?.kind ? ` [${err.data.kind}]` : '';
       res = errorResult(`${err.message}${kind}`);
     }
-    return deps.decorate(res);
+    const base = deps.bridge?.outputTokens ?? DEFAULT_OUTPUT_TOKENS;
+    return deps.decorate(budgetResult(res, Math.max(base, Math.ceil((asked?.(args) ?? 0) * 1.25))));
   };
 }
 
@@ -54,7 +78,7 @@ export function registerPageTools(server: McpServer, deps: ToolDeps): void {
   }, wrap(deps, async (a: { tab?: string; view?: string; target?: string; budget?: number }) => {
     const r = await bridge.call('page.observe', a);
     return text(`tab ${r.tab} · ${r.url}\n${r.text}`);
-  }));
+  }, (a) => a.budget));
 
   server.registerTool('jev_find', {
     title: 'Find elements',

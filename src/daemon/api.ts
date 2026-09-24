@@ -30,6 +30,8 @@ export interface DaemonContext {
   startedAt: number;
   sessionOf(conn: Connection): string;
   extras: Record<string, () => unknown>;
+  /** Secret values that must never leave the daemon (task params marked secret). */
+  secrets: Array<() => string[]>;
 }
 
 export { hostOf, thresholdsFor };

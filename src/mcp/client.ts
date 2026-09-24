@@ -2,7 +2,7 @@ import { connectDaemon, type DaemonClient } from '../daemon/client.ts';
 import { PROTOCOL_VERSION } from '../daemon/protocol.ts';
 import { logger } from '../core/util/log.ts';
 
-interface Hello { sessionId: string; version?: string; protocol?: number; tools?: string; startedAt?: number }
+interface Hello { sessionId: string; version?: string; protocol?: number; tools?: string; startedAt?: number; outputTokens?: number }
 
 /**
  * Whether this MCP server and the daemon agree: the same protocol, and the same tools the agent was given. When
@@ -32,6 +32,8 @@ export class DaemonBridge {
   own: { tools: string; startedAt: number } | null = null;
   /** Set when this server and the daemon disagree: appended to every tool result. */
   notice: string | null = null;
+  /** Token budget of one tool output (the daemon's privacy.outputTokens). */
+  outputTokens: number | undefined;
 
   async get(): Promise<DaemonClient> {
     if (this.client && !this.client.closed) return this.client;
@@ -39,6 +41,7 @@ export class DaemonBridge {
       const c = await connectDaemon({ autostart: true });
       const hello = await c.call<Hello>('session.hello', { client: this.clientName, pid: process.pid, sessionId: this.sessionId ?? undefined, protocol: PROTOCOL_VERSION });
       this.sessionId = hello.sessionId;
+      this.outputTokens = hello.outputTokens;
       if (this.own) {
         this.notice = compatNotice(hello, this.own);
         if (this.notice) log.warn(this.notice);

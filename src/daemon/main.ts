@@ -13,6 +13,7 @@ import { socketPath, logFile } from '../core/util/paths.ts';
 import { configureLog, logger } from '../core/util/log.ts';
 import { newId } from '../core/util/ids.ts';
 import { PROTOCOL_VERSION } from './protocol.ts';
+import { privacyFilter } from '../core/safety/privacy.ts';
 import { codeFingerprint, toolsFingerprint } from '../mcp/fingerprint.ts';
 
 const log = logger('daemon');
@@ -60,7 +61,9 @@ export async function startDaemon(opts: {
       return id;
     },
     extras: { sessions: () => sessions.size },
+    secrets: [],
   };
+  rpc.transform = (_method, result) => privacyFilter(result, { secrets: ctx.secrets.flatMap((f) => f()), cards: cfg.privacy.maskCards });
 
   rpc.register('session.hello', (p: { client?: string; pid?: number; sessionId?: string; protocol?: number }, conn) => {
     // A client reconnecting after a daemon restart keeps its session: tasks it started stay its own.
@@ -69,7 +72,7 @@ export async function startDaemon(opts: {
     conn.sessionId = id;
     conn.client = p.client ?? 'unknown';
     // What the agent should see now (tool list and instructions of this code): an MCP server started earlier compares.
-    return { sessionId: id, version: VERSION, protocol: PROTOCOL_VERSION, tools: toolsFingerprint(), startedAt: ctx.startedAt };
+    return { sessionId: id, version: VERSION, protocol: PROTOCOL_VERSION, tools: toolsFingerprint(), startedAt: ctx.startedAt, outputTokens: cfg.privacy.outputTokens };
   });
   registerPageApi(rpc, ctx);
 

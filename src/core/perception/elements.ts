@@ -1,5 +1,6 @@
 import type { RawCapture, RawNode } from './capture.ts';
 import type { ElementKind, ElementStates, NameSource, Rect } from './types.ts';
+import { sensitiveValue } from '../safety/privacy.ts';
 import { attributeName, axNameSource, cleanText, findNearbyText, type TextBox } from './naming.ts';
 
 /** An element before regions and refs are assigned. */
@@ -506,7 +507,9 @@ export function extractElements(raw: RawCapture): { drafts: ElementDraft[]; info
     if (n.attrs.placeholder) d.placeholder = cleanText(n.attrs.placeholder, 80);
     if (n.tag === 'input' || n.tag === 'textarea') {
       d.inputType = (n.attrs.type ?? (n.tag === 'textarea' ? 'textarea' : 'text')).toLowerCase();
-      if (d.inputType === 'password') d.value = n.inputValue ? '••••' : '';
+      // Passwords, card numbers and security codes never leave the page as typed (not to JEV, not to the agent).
+      const hidden = sensitiveValue(n.attrs, d.inputType, n.inputValue ?? '');
+      if (hidden !== null) d.value = hidden;
       else if (d.kind === 'textbox' || d.kind === 'combobox' || d.kind === 'slider') d.value = cleanText(n.inputValue ?? '', 120);
     } else if (d.kind === 'textbox' && n.attrs.contenteditable !== undefined) {
       d.value = inner;

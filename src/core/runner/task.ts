@@ -496,6 +496,9 @@ export class Task extends Emitter<TaskEvents> {
 
   private mask<T>(v: T): T { return maskSecrets(v, secretValues(this.params)); }
 
+  /** Secret param values of this task (the daemon masks them in everything it sends out). */
+  secretValues(): string[] { return secretValues(this.params); }
+
   private maskedSpec(): unknown {
     return this.mask({ ...this.spec, params: Object.fromEntries(Object.entries(this.spec.params).map(([k, p]) => [k, p.secret ? { ...p, value: '[secret]' } : p])) });
   }

@@ -35,6 +35,17 @@ describe('perception', () => {
     expect(find(m, (e) => /Hidden decorative/.test(e.name))).toBeUndefined();
   });
 
+  it('never shows card numbers or security codes as typed', async () => {
+    const page = await h.open('checkout.html?price=41230');
+    await page.evaluate("document.getElementById('cc').value = '4242 4242 4242 4242'; document.getElementById('exp').value = '12/29'; document.getElementById('fn').value = 'ANNA'");
+    const m = await observePage(page);
+    const byId = (id: string) => find(m, (e) => e.attrs.id === id)!;
+    expect(byId('cc').value).toBe('•••• 4242');
+    expect(byId('exp').value).toBe('••••');
+    expect(byId('fn').value).toBe('ANNA');
+    expect(renderOverview(m, 3000)).not.toContain('4242 4242');
+  });
+
   it('treats a tooltip on an empty dimmer as a blocking dialog', async () => {
     const page = await h.open('tutorial.html');
     const m = await observePage(page);

@@ -25,6 +25,8 @@ export class RpcServer {
   inFlight = 0;
   onDisconnect: (conn: Connection) => void = () => {};
   onActivity: () => void = () => {};
+  /** Applied to every result before it leaves the daemon (the privacy filter). */
+  transform: (method: string, result: unknown) => unknown = (_m, r) => r;
 
   constructor() {
     this.server = createServer((socket) => this.accept(socket));
@@ -75,7 +77,7 @@ export class RpcServer {
     this.inFlight++;
     try {
       const result = await handler(req.params ?? {}, conn);
-      reply({ result: result ?? null });
+      reply({ result: this.transform(req.method, result ?? null) });
     } catch (e) {
       if (e instanceof RpcError) return reply({ error: { code: e.code, message: e.message, data: e.data } });
       const err = e as Error & { kind?: string };

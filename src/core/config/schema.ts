@@ -97,6 +97,11 @@ export const configSchema = z.object({
     screenshots: z.boolean().default(true),
   }).prefault({}),
   memory: z.object({ enabled: z.boolean().default(true) }).prefault({}),
+  /** What tool outputs may carry: card numbers are masked, and each output is cut at a token budget. */
+  privacy: z.object({
+    maskCards: z.boolean().default(true),
+    outputTokens: z.number().int().min(500).max(50_000).default(8000),
+  }).prefault({}),
   ui: z.object({ port: z.number().int().min(0).max(65535).default(0) }).prefault({}),
 });
 

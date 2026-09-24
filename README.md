@@ -284,6 +284,9 @@ Hints are scoped too. A hint in a task spec applies everywhere. A hint given as 
 
 - **Irreversible actions ask first.** This covers pay, buy, order, book, send, subscribe, delete, publish and forms that collect card details, detected by code rules in English and Russian plus JEV. It applies at any confidence unless you set `policy.irreversible: "allow"`.
 - **Secrets stay local.** Params marked `secret: true` are typed by code and masked everywhere. JEV sees only `[secret]`. The trace store refuses anything that looks like an API key.
+- **Privacy filter by default.** Passwords, card numbers, card expiry and security or one-time codes never leave the page as typed: the page model shows `••••` (card numbers keep their last four digits), so neither JEV nor the agent sees them. Everything the daemon sends out also passes a filter that masks every running task's secret values and card numbers in text (`privacy.maskCards`).
+- **Output budgets.** Every tool output keeps to a token budget (`privacy.outputTokens`, default 8000; `jev_observe` can ask for more with `budget`). A cut output says so and how to ask for less.
+- **Updates are announced.** The MCP server and the daemon compare protocol versions and the tools the agent was given. After an update, tool results say what to restart (the MCP server, or the daemon, which also restarts by itself on new code when idle).
 - **Prompt-injection hygiene.** Hidden and `aria-hidden` text never enters the page model. Page text lives only in the JEV *state*, never in question instructions.
 - **Local-only services.** The unix socket has 0600 permissions. The UI binds to 127.0.0.1 and needs a token. The extension WebSocket checks the `Origin` and requires a one-time pairing.
 - **Budgets and limits** apply per task and per day: cost, steps and time.
