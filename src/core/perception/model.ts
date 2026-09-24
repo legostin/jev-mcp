@@ -116,7 +116,11 @@ export function buildPageModel(raw: RawCapture, prev?: PageModel & Partial<Model
   for (const rd of regionDrafts) {
     if (!rd.items) continue;
     const region = draftRegion.get(rd)!;
-    region.items = rd.items.map((itemIdx) => drafts.filter((d) => isDescendant(info, itemIdx, d.idx)).map((d) => refByIdx.get(d.idx)!));
+    // An item may span several sibling rows (title row, details row): its refs come from all of them.
+    region.items = rd.items.map((itemIdx, i) => {
+      const nodes = rd.members?.[i] ?? [itemIdx];
+      return drafts.filter((d) => nodes.some((n) => isDescendant(info, n, d.idx))).map((d) => refByIdx.get(d.idx)!);
+    });
   }
 
   // Blocking overlays: modal-like layers that cover interactive elements of other regions. A layer counts as

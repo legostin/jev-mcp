@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Wire Example — top stories</title>
+<style>
+  body { font-family: Verdana, sans-serif; font-size: 13px; margin: 0; }
+  table { border-collapse: collapse; width: 85%; margin: 8px auto; background: #f6f6ef; }
+  .rank { color: #828282; text-align: right; width: 24px; }
+  .subtext { color: #828282; font-size: 11px; }
+  .spacer { height: 5px; }
+  section { width: 85%; margin: 16px auto; }
+  article { border-bottom: 1px solid #ddd; padding: 8px 0; }
+  .cat { font-size: 11px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<!-- An aggregator table: each story is a title row, a details row and a spacer row. -->
+<table id="stories"><tbody id="rows"></tbody></table>
+<!-- A card list where every card starts with its section tag; several cards share the same tag link. -->
+<section><h2>Latest in AI</h2><div id="cards"></div></section>
+<script>
+const stories = [
+  ['Open model tops the robotics leaderboard at half the size', 'robots.example', 312, 'alice', '2 hours ago', 88],
+  ['A new way for language models to share state', 'papers.example', 145, 'bob', '5 hours ago', 31],
+  ['Why data centers publish their water use now', 'news.example', 98, 'carol', '7 hours ago', 54],
+  ['Show: a tiny inference server in one file', 'code.example', 77, 'dave', '9 hours ago', 12],
+  ['The history of the scroll bar', 'blog.example', 60, 'erin', '11 hours ago', 20],
+];
+const rows = document.getElementById('rows');
+stories.forEach(([title, site, points, user, when, comments], i) => {
+  rows.insertAdjacentHTML('beforeend', `
+    <tr class="story"><td class="rank">${i + 1}.</td><td><a href="#vote-${i}" class="vote">▲</a></td>
+      <td class="title"><a href="https://${site}/post/${100 + i}">${title}</a> <span>(<a href="?from=${site}">${site}</a>)</span></td></tr>
+    <tr><td colspan="2"></td><td class="subtext"><span>${points} points</span> by <a href="?user=${user}">${user}</a> <a href="?item=${100 + i}">${when}</a> | <a href="?hide=${100 + i}">hide</a> | <a href="?item=${100 + i}">${comments} comments</a></td></tr>
+    <tr class="spacer"><td colspan="3"></td></tr>`);
+});
+rows.insertAdjacentHTML('beforeend', '<tr><td colspan="2"></td><td><a href="?p=2">More</a></td></tr>');
+const cards = [
+  ['AI', 'Assistant app gets voice actions', 'Jane Roe', '3 hours ago'],
+  ['AI', 'Lab says its model found a new enzyme family', 'John Doe', '4 hours ago'],
+  ['Hardware', 'Glasses without a camera go on sale', 'Mary Major', '6 hours ago'],
+  ['AI', 'Startup raises $77M for enterprise agents', 'Jane Roe', '8 hours ago'],
+];
+document.getElementById('cards').innerHTML = cards.map(([cat, title, author, when], i) => `
+  <article><a class="cat" href="/category/${cat.toLowerCase()}/">${cat}</a>
+    <h3><a href="/2026/09/24/story-${i}/">${title}</a></h3>
+    <a href="/author/${author.replace(' ', '-').toLowerCase()}/">${author}</a> <time>${when}</time></article>`).join('');
+</script>
+</body>
+</html>

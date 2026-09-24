@@ -12,6 +12,8 @@ export interface RegionDraft {
   rect: Rect;
   /** For lists: item root node indices. */
   items?: number[];
+  /** For lists whose items span several sibling rows: every node of each item. */
+  members?: number[][];
   paintOrder: number;
 }
 
@@ -122,16 +124,16 @@ export function detectRegions(raw: RawCapture, info: NodeInfo[], drafts: Element
     const p = raw.nodes[g.parent];
     if (!p.rect || p.tag === 'form') continue;
     // Form rows are not result lists: skip groups whose items hold text inputs.
-    if (g.items.some((it) => textInputs.some((t) => isDescendant(info, it, t)))) continue;
+    if ((g.members?.flat() ?? g.items).some((it) => textInputs.some((t) => isDescendant(info, it, t)))) continue;
     const existing = out.find((r) => r.anchor === g.parent);
     const label = `${g.items.length} items`;
     if (existing && (existing.kind === 'section' || existing.kind === 'main' || existing.kind === 'aside')) {
-      existing.kind = 'list'; existing.items = g.items; existing.label = existing.label ? `${existing.label}, ${label}` : label;
-    } else if (existing) existing.items = g.items;
-    else out.push({ anchor: g.parent, kind: 'list', label, rect: p.rect, items: g.items, paintOrder: p.paintOrder ?? 0 });
+      existing.kind = 'list'; existing.items = g.items; existing.members = g.members; existing.label = existing.label ? `${existing.label}, ${label}` : label;
+    } else if (existing) { existing.items = g.items; existing.members = g.members; }
+    else out.push({ anchor: g.parent, kind: 'list', label, rect: p.rect, items: g.items, members: g.members, paintOrder: p.paintOrder ?? 0 });
   }
   // Items of a list are not separate sections.
-  const listItems = out.filter((r) => r.kind === 'list').flatMap((r) => r.items ?? []);
+  const listItems = out.filter((r) => r.kind === 'list').flatMap((r) => r.members?.flat() ?? r.items ?? []);
   for (let i = out.length - 1; i >= 0; i--) {
     if (out[i].kind === 'section' && listItems.some((it) => it === out[i].anchor || isDescendant(info, it, out[i].anchor))) out.splice(i, 1);
   }

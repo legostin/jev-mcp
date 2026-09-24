@@ -2451,7 +2451,8 @@ export class Task extends Emitter<TaskEvents> {
     if (found.list) {
       const used = estimateTokens(this.handoffItems);
       fresh = listItems(model, found.list, budget - used, this.handoffItems.length)
-        .filter((it) => { const key = it.url ?? it.text; if (this.handoffSeen.has(key)) return false; this.handoffSeen.add(key); return true; })
+        // Items seen on an earlier load: same link and same text (several items may share a link).
+        .filter((it) => { const key = `${it.url ?? ''}|${it.text}`; if (this.handoffSeen.has(key)) return false; this.handoffSeen.add(key); return true; })
         .map((it, j) => ({ ...it, i: this.handoffItems.length + j }));
       this.handoffItems.push(...fresh);
     }

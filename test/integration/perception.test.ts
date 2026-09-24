@@ -35,6 +35,23 @@ describe('perception', () => {
     expect(find(m, (e) => /Hidden decorative/.test(e.name))).toBeUndefined();
   });
 
+  it('keeps a story spread over several table rows together, and hands over each item under its title link', async () => {
+    const page = await h.open('news.html');
+    const m = await observePage(page);
+    const lists = m.regions.filter((r) => r.kind === 'list');
+    const table = lists.find((r) => r.items?.length === 5)!;
+    const cards = lists.find((r) => r.items?.length === 4)!;
+    const { listItems } = await import('../../src/core/extract/handoff.ts');
+    const stories = listItems(m, table);
+    expect(stories.map((s) => s.url)).toEqual([0, 1, 2, 3, 4].map((i) => expect.stringMatching(new RegExp(`/post/${100 + i}$`))));
+    expect(stories[0].text).toMatch(/^Open model tops the robotics leaderboard at half the size \| robots\.example \| 312 points/);
+    expect(stories[0].text).not.toMatch(/hide|^1\./);
+    // Every card is handed over with its own article, not the section tag it starts with.
+    const items = listItems(m, cards);
+    expect(items).toHaveLength(4);
+    expect(items.map((c) => new URL(c.url!).pathname)).toEqual([0, 1, 2, 3].map((i) => `/2026/09/24/story-${i}/`));
+  });
+
   it('never shows card numbers or security codes as typed', async () => {
     const page = await h.open('checkout.html?price=41230');
     await page.evaluate("document.getElementById('cc').value = '4242 4242 4242 4242'; document.getElementById('exp').value = '12/29'; document.getElementById('fn').value = 'ANNA'");

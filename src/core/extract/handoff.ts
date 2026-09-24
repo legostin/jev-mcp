@@ -8,7 +8,8 @@ import { estimateTokens } from '../util/tokens.ts';
  */
 export interface HandoffItem { i: number; text: string; url: string | null }
 
-interface Segment { text: string; link: boolean }
+/** `title`: the item's title link (the one its URL comes from), never dropped as furniture. */
+interface Segment { text: string; link: boolean; title?: boolean }
 
 /** Drops tracking noise from item links: long parameter values and utm_* tags. Keeps the item's own address. */
 export function compactUrl(href: string, base: string): string | null {
@@ -30,19 +31,29 @@ function overlap(a: string, b: string): number {
   return x.length ? x.filter((w) => y.has(w)).length / x.length : 0;
 }
 
-/** Visible texts of an item in order, without repeats (titles often appear two or three times), and its link. */
+const letterWords = (s: string) => words(s).filter((w) => /\p{L}/u.test(w)).length;
+
+/**
+ * Visible texts of an item in order, and its link: the link with the most words (the title), not the first one,
+ * which is often a category tag, a vote arrow or an author.
+ */
 function segments(model: PageModel, refs: string[]): { segs: Segment[]; url: string | null } {
   const segs: Segment[] = [];
-  let url: string | null = null;
+  let best: { href: string; n: number; seg: Segment | null } | null = null;
   for (const r of refs) {
     const e = model.elements.get(r);
     if (!e || !e.visible) continue;
-    if (!url && e.kind === 'link' && e.href) url = compactUrl(e.href, model.url);
     const text = cleanText(e.text || e.name, 200);
-    if (text.length < 2) continue;
-    segs.push({ text, link: e.kind === 'link' });
+    // Enumeration marks ("1.", "12.") are list furniture.
+    const seg: Segment | null = text.length < 2 || /^\d{1,4}\.$/.test(text) ? null : { text, link: e.kind === 'link' };
+    if (seg) segs.push(seg);
+    if (e.kind === 'link' && e.href) {
+      const n = letterWords(text);
+      if (!best || n > best.n) best = { href: e.href, n, seg };
+    }
   }
-  return { segs, url };
+  if (best?.seg) best.seg.title = true;
+  return { segs, url: best ? compactUrl(best.href, model.url) : null };
 }
 
 // A shown address ("(https://site/blog/introducing-x)") repeats a title's words but is not the title.
@@ -74,7 +85,8 @@ function boilerplate(items: Segment[][]): { labels: Set<string>; tails: RegExp[]
     const seenT = new Set<string>();
     for (const s of segs) {
       const key = s.text.toLowerCase();
-      if (!s.link && words(key).length <= 3 && !seenL.has(key)) { seenL.add(key); label.set(key, (label.get(key) ?? 0) + 1); }
+      // Short texts, links too ("hide", "Read more"): a title never repeats in most items.
+      if (words(key).length <= 3 && !seenL.has(key)) { seenL.add(key); label.set(key, (label.get(key) ?? 0) + 1); }
       const w = s.text.split(/\s+/);
       for (let k = 3; k <= Math.min(8, w.length - 1); k++) {
         // Numbers vary only in short counters ("Image 1 of 4"); longer tails must match literally.
@@ -98,7 +110,7 @@ function boilerplate(items: Segment[][]): { labels: Set<string>; tails: RegExp[]
 function line(segs: Segment[], bp: { labels: Set<string>; tails: RegExp[] }, max: number): string {
   const kept: Segment[] = [];
   for (const s of segs) {
-    if (bp.labels.has(s.text.toLowerCase())) continue;
+    if (bp.labels.has(s.text.toLowerCase()) && !s.title) continue;
     let text = s.text;
     for (const re of bp.tails) text = text.replace(re, '');
     if (text.trim().length >= 2) kept.push({ ...s, text: text.trim() });
