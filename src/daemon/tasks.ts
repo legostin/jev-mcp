@@ -163,7 +163,7 @@ export class TaskManager {
         port: lazyPortFor(this.ctx, rec.id, cp?.url ?? null, driver), memory: this.memory,
       });
       if (!task) {
-        this.ctx.trace.updateTask(rec.id, { state: 'failed', result: { status: 'failed', error: 'the daemon restarted and the task cannot continue on its own (a secret param was still needed)' } });
+        this.ctx.trace.updateTask(rec.id, { state: 'failed', result: { status: 'failed', error: 'the daemon restarted and the task has no usable checkpoint' } });
         continue;
       }
       this.adopt(task);

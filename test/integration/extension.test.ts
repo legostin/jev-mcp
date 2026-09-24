@@ -69,10 +69,11 @@ describe.skipIf(!cft || !existsSync(join(extDir, 'worker.js')))('Chrome extensio
   }, 180_000);
 
   afterAll(async () => {
-    client?.close();
-    await daemon?.close();
-    await chrome?.close({ force: true });
-    await fixtures?.close();
+    // Chrome first and each step on its own: a failed setup or a hanging daemon must not leave the browser running.
+    await chrome?.close({ force: true }).catch(() => {});
+    try { client?.close(); } catch { /* already closed */ }
+    await daemon?.close().catch(() => {});
+    await fixtures?.close().catch(() => {});
     rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 

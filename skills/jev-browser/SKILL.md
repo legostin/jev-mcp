@@ -79,7 +79,7 @@ Answer with `jev_answer`. Look first (`jev_observe`, `jev_screenshot`) when the 
 | `assess`: the search found nothing | `set_param` with a broader value, give a `hint`, or `continue` to read the page anyway. |
 | `stuck` | Observe or take a screenshot, then send a `hint`; or act yourself with `jev_act` and answer `continue`; or `abort` |
 
-A task shown as `interrupted` (after a daemon restart or an update) keeps its progress: `jev_control resume` continues it in a tab at its last address. A task paused with `user_takeover` means the user is working in the tab: leave it until they resume it (side panel) or ask them.
+A task shown as `interrupted` (after a daemon restart or an update) keeps its progress: `jev_control resume` continues it in a tab at its last address. Secrets it had not used yet are not kept: its status says which; the task asks for them (`missing_param`) if a page needs them. A task paused with `user_takeover` means the user is working in the tab: leave it until they resume it (side panel) or ask them.
 
 Do not answer `continue` to a blocker you have not resolved: the task will only ask again.
 

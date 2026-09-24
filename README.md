@@ -276,7 +276,7 @@ Low confidence often means a close call between two plausible controls, not a wr
 
 `trial` sits in the same layers as the thresholds, e.g. `"policy": { "confidence": { "trial": { "floor": 0.2, "tries": 3 } } }` or `jev settings set confidence.trial.enabled false`.
 
-Tasks survive a daemon restart: progress is checkpointed after every step (secrets masked), and an interrupted task continues with `jev_control resume` in a tab at its last address.
+Tasks survive a daemon restart: progress is checkpointed after every step (secrets masked), and an interrupted task continues with `jev_control resume` in a tab at its last address. Secret values are never written to disk: a secret the task has not used yet is dropped on restart, and the task asks for it again only if a page needs it (or give it back with `jev_control update`).
 
 Hints are scoped too. A hint in a task spec applies everywhere. A hint given as an answer to a question about one step (and a `scope: "domain"` hint saved from it) is bound to that step and param: a hint about the body type filter reaches steps about the body type, not the model or the city.
 

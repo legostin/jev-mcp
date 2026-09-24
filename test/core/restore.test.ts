@@ -13,7 +13,7 @@ const port: TabPort = {
 };
 
 describe('tasks after a daemon restart', () => {
-  it('come back interrupted with their progress, unless they still need a secret', () => {
+  it('come back interrupted with their progress; secrets not used yet are dropped and asked for again', () => {
     const dir = mkdtempSync(join(tmpdir(), 'jevrs-'));
     const trace = TraceStore.open(join(dir, 'db.sqlite'), join(dir, 'blobs'));
     try {
@@ -38,7 +38,11 @@ describe('tasks after a daemon restart', () => {
       expect(ok.state).toBe('interrupted');
       // Non-secret values are checked on the page again after a restart; the typed secret stays done.
       expect(ok.statusView()).toMatchObject({ step: 4, progress: { email: 'typed', pw: 'done' } });
-      expect(Task.restore(recs.find((r) => r.id === 't_secret')!, deps)).toBeNull();
+      const lost = Task.restore(recs.find((r) => r.id === 't_secret')!, deps)!;
+      expect(lost.state).toBe('interrupted');
+      expect(lost.statusView()).toMatchObject({ progress: { email: 'typed' } });
+      expect((lost.statusView() as any).progress.pw).toBeUndefined();
+      expect((lost.statusView() as any).reason).toMatch(/Secret params were not kept \(pw\)/);
     } finally {
       trace.close();
       rmSync(dir, { recursive: true, force: true });

@@ -366,10 +366,13 @@ export class Task extends Emitter<TaskEvents> {
     const parsed = taskSpecSchema.safeParse(rec.spec);
     if (!cp || cp.v !== 1 || !parsed.success) return null;
     const spec = parsed.data;
-    // Secret values are never stored: a task that still needs one cannot continue on its own.
-    if (Object.entries(spec.params).some(([k, p]) => p.secret && cp.status[k] !== 'done')) return null;
+    // Secret values are never stored. One not used yet is dropped: the path may not need it (already signed in),
+    // and a page that does asks for it again (missing_param) like any field no param covers.
+    const lost = Object.keys(spec.params).filter((k) => spec.params[k].secret && cp.status[k] !== 'done');
+    for (const k of lost) delete spec.params[k];
     const t = new Task(spec, deps, rec.id);
     Object.assign(t.status, cp.status);
+    for (const k of lost) delete t.status[k];
     // The page may have moved on or back without us (state that lives in the page, not in the address): values
     // recorded as set are checked again on the page before they are trusted.
     for (const [k, st] of Object.entries(t.status)) if (st === 'done' && !spec.params[k].secret) t.status[k] = 'typed';
@@ -386,7 +389,9 @@ export class Task extends Emitter<TaskEvents> {
     t.liveConfidence = cp.liveConfidence;
     t.resumeUrl = cp.url;
     t.state = 'interrupted';
-    t.stateReason = 'the daemon restarted; resume the task to continue';
+    t.stateReason = lost.length
+      ? `the daemon restarted; resume the task to continue. Secret params were not kept (${lost.join(', ')}): give them again with an update, or when the task asks`
+      : 'the daemon restarted; resume the task to continue';
     return t;
   }
 
