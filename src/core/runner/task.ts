@@ -1,7 +1,7 @@
 import type { PageSession } from '../cdp/page.ts';
 import type { Config } from '../config/schema.ts';
 import type { Thresholds } from '../config/thresholds.ts';
-import type { JevClient } from '../jev/types.ts';
+import type { JevClient, Json } from '../jev/types.ts';
 import type { TraceStore } from '../trace/store.ts';
 import type { PageModel, ElementNode, Region } from '../perception/types.ts';
 import type { ModelState } from '../perception/model.ts';
@@ -27,6 +27,8 @@ import { deterministicRisk, domainAllowed } from '../safety/rules.ts';
 import { maskSecrets, secretValues } from '../safety/secrets.ts';
 import { isSignInParam, Journal, type JournalData } from './journal.ts';
 import { cleanText } from '../perception/naming.ts';
+import { Plan } from './plan.ts';
+import { consultReport, CONSULT_ANSWERS } from './consult.ts';
 import { thresholdsFor, hostOf } from './thresholds.ts';
 import { dateRange, fieldHoldsValue, isEmptyField, isValueLabel, normalizeText, paramKind, requiredEmptyFields, showsValue } from './progress.ts';
 import { Emitter } from '../util/events.ts';
@@ -34,7 +36,7 @@ import { newId } from '../util/ids.ts';
 import { logger } from '../util/log.ts';
 import type { ConfidenceConfig, DecisionKind } from '../config/schema.ts';
 import type {
-  AnswerInput, Escalation, EscalationKind, ParamStatus, StepSummary, TaskResult, TaskSpec, TaskState,
+  AnswerInput, Escalation, EscalationKind, ParamStatus, PlanStep, StepSummary, TaskResult, TaskSpec, TaskState,
 } from './types.ts';
 import { FINAL_STATES, taskSpecSchema } from './types.ts';
 import type { TaskRecord } from '../trace/store.ts';
@@ -90,6 +92,8 @@ type Subintent =
   | { type: 'reload' }
   | { type: 'enter' }
   | { type: 'explore' }
+  | { type: 'goto'; url: string }
+  | { type: 'await_agent' }
   | { type: 'fill_any'; ref: string; group: string }
   | { type: 'wait' }
   | { type: 'done'; reason: string }
@@ -116,12 +120,15 @@ export interface TaskCheckpoint {
   /** Limits the agent already extended, idle time so far and when the checkpoint was saved (added later: optional). */
   maxStepsBonus?: number; budgetBonus?: number; idleMs?: number; savedAt?: number;
   journal?: JournalData;
+  plan?: { steps: PlanStep[]; index: number } | null;
 }
 
 type TaskEvents = {
   state: { state: TaskState; reason?: string };
   step: StepSummary;
   escalation: Escalation;
+  /** An open question (consult) is no longer needed: the task found its way meanwhile. */
+  withdrawn: { question_id: string; reason: string };
   done: TaskResult;
 };
 
@@ -182,7 +189,7 @@ export class Task extends Emitter<TaskEvents> {
   private idleSince: number | null = null;
   private lastInputCheck = 0;
   private model: Model | undefined;
-  private assessCache: { sig: string; out: AssessOutput } | null = null;
+  private assessCache: { sig: string; out: AssessOutput; plan: number } | null = null;
   private dismissed = new Set<string>();
   private submitsDone = 0;
   private revealTried = new Set<string>();
@@ -208,6 +215,14 @@ export class Task extends Emitter<TaskEvents> {
   private explored = new Set<string>();
   /** Menus and sections the task opened (never toggled closed again by exploring). */
   private exploredVia = new Set<string>();
+  /** The agent's milestones, if it gave any (in the spec or in an answer). */
+  private plan: Plan | null = null;
+  /** A consult asked without stopping: the task explores safe steps until the answer comes or the budget ends. */
+  private consultQ: { q: Escalation; level: number; milestone: number; explored: number; answer?: AnswerInput } | null = null;
+  /** The last step with progress (a higher level, a param, a form step, a milestone) and what progress looked like. */
+  private lastProgressStep = 0;
+  private bestLevel = -1;
+  private progressKey = '';
   /** Working memory: facts, pages passed, ways that did not work. */
   private journal = new Journal();
   /** A field search started ahead (see startPrefetch). */
@@ -236,13 +251,22 @@ export class Task extends Emitter<TaskEvents> {
     this.hints = spec.hints.map((text) => ({ text, source: 'task' as const }));
     this.params = structuredClone(spec.params);
     for (const k of Object.keys(this.params)) this.status[k] = 'pending';
+    this.plan = spec.plan?.length ? new Plan(spec.plan) : null;
   }
 
   // ---------------------------------------------------------------- public API
 
   get tabId(): string { return this.deps.port.tabId; }
   get finished(): boolean { return FINAL_STATES.has(this.state); }
-  get pendingQuestion(): Escalation | null { return this.pending?.q ?? null; }
+  get pendingQuestion(): Escalation | null { return this.openQuestions[0] ?? null; }
+
+  /** The blocking question, and a consult the task asked while exploring on (not answered yet). */
+  get openQuestions(): Escalation[] {
+    const out: Escalation[] = [];
+    if (this.pending) out.push(this.pending.q);
+    if (this.consultQ && !this.consultQ.answer && this.consultQ.q !== this.pending?.q) out.push(this.consultQ.q);
+    return out;
+  }
 
   start(): Promise<void> {
     this.startedAt = this.now();
@@ -257,7 +281,9 @@ export class Task extends Emitter<TaskEvents> {
     return {
       task_id: this.id, state: this.state, reason: this.stateReason, goal: this.spec.goal, tab: this.tabId,
       step: this.stepIdx, subintent: this.lastSub ? label(this.lastSub) : null, url: this.model?.url ?? null,
-      progress: { ...this.status }, pending_question: this.pending?.q ?? null, recent_steps: this.recent.slice(-5),
+      progress: { ...this.status }, pending_question: this.pendingQuestion, recent_steps: this.recent.slice(-5),
+      ...(this.openQuestions.length > 1 ? { open_questions: this.openQuestions.map((q) => ({ question_id: q.question_id, kind: q.kind, summary: q.summary })) } : {}),
+      ...(this.plan ? { plan: this.plan.toJSON() } : {}),
       stats: this.stats(),
     };
   }
@@ -265,6 +291,14 @@ export class Task extends Emitter<TaskEvents> {
   result(): TaskResult | null { return this.finalResult; }
 
   answer(questionId: string, input: AnswerInput): { accepted: boolean; message: string } {
+    const c = this.consultQ;
+    if (c && c.q.question_id === questionId && this.pending?.q !== c.q) {
+      // Answered while the task explores on: applied at its next step.
+      if (c.answer) return { accepted: false, message: `Question ${questionId} is already answered.` };
+      c.answer = input;
+      this.deps.trace.recordEscalation({ id: c.q.question_id, taskId: this.id, createdAt: c.q.created_at, kind: c.q.kind, payload: c.q, answer: this.mask(input), answeredAt: this.now() });
+      return { accepted: true, message: 'Answer accepted; the task applies it at its next step.' };
+    }
     if (!this.pending || this.pending.q.question_id !== questionId) {
       return { accepted: false, message: `Question ${questionId} is not pending for task ${this.id}.` };
     }
@@ -428,6 +462,7 @@ export class Task extends Emitter<TaskEvents> {
     t.budgetBonus = cp.budgetBonus ?? 0;
     t.idleMs = cp.idleMs ?? 0;
     t.journal = Journal.from(cp.journal);
+    t.plan = Plan.from(cp.plan) ?? t.plan;
     // The daemon was down since the last checkpoint: that time is idle too, until the task is resumed.
     t.idleSince = cp.savedAt ?? Date.now();
     t.state = 'interrupted';
@@ -444,6 +479,7 @@ export class Task extends Emitter<TaskEvents> {
       sortedBy: this.sortedBy, url: this.model?.url ?? this.resumeUrl, driver: this.spec.driver ?? null, liveConfidence: this.liveConfidence,
       maxStepsBonus: this.maxStepsBonus, budgetBonus: this.budgetBonus, idleMs: this.idleMs, savedAt: this.now(),
       journal: this.journal.toJSON(),
+      plan: this.plan?.toJSON() ?? null,
     };
   }
 
@@ -539,6 +575,14 @@ export class Task extends Emitter<TaskEvents> {
   // ---------------------------------------------------------------- escalation
 
   private async escalate(kind: EscalationKind, summary: string, extra: Partial<Escalation> = {}): Promise<AnswerInput> {
+    const q = await this.makeQuestion(kind, summary, extra);
+    const answer = await this.waitAnswer(q);
+    this.applyAnswer(kind, answer);
+    return answer;
+  }
+
+  /** A question for the agent, recorded in the trace (not yet published). */
+  private async makeQuestion(kind: EscalationKind, summary: string, extra: Partial<Escalation> = {}): Promise<Escalation> {
     const model = this.model;
     const q: Escalation = {
       question_id: newId('q'), task_id: this.id, kind, summary: this.mask(summary), created_at: this.now(),
@@ -559,16 +603,27 @@ export class Task extends Emitter<TaskEvents> {
     }
     this.escalations++;
     this.deps.trace.recordEscalation({ id: q.question_id, taskId: this.id, createdAt: q.created_at, kind, payload: q });
+    return q;
+  }
+
+  /** Waits for the answer to a question (published now, or already published by a consult). */
+  private async waitAnswer(q: Escalation, publish = true): Promise<AnswerInput> {
     const answer = await new Promise<AnswerInput>((resolve, reject) => {
       this.pending = { q, resolve, reject };
-      this.setState('awaiting_input', kind);
-      this.emit('escalation', q);
+      this.setState('awaiting_input', q.kind);
+      if (publish) this.emit('escalation', q);
       const pauseMs = this.deps.getConfig().limits.awaitInputPauseMinutes * 60_000;
       const timer = setTimeout(() => { if (this.pending?.q === q) this.setState('paused', 'waiting for an answer'); }, pauseMs);
       timer.unref?.();
     });
     this.setState('running');
-    this.note(`answer to ${kind}: ${answer.type}${answer.type === 'pick' ? ` ${answer.ref}` : answer.type === 'hint' ? ` "${answer.text}"` : ''}`);
+    this.note(`answer to ${q.kind}: ${answer.type}${answer.type === 'pick' ? ` ${answer.ref}` : answer.type === 'hint' ? ` "${answer.text}"` : ''}`);
+    return answer;
+  }
+
+  /** What any answer changes in the task: abort, hints, thresholds, params. */
+  private applyAnswer(kind: EscalationKind, answer: AnswerInput): void {
+    const model = this.model;
     if (answer.type === 'abort') throw new Cancelled(answer.reason ?? 'aborted by the agent');
     if (answer.type === 'hint') {
       // A hint given to a question about one step belongs to that step and its param; others apply to the whole task.
@@ -577,6 +632,7 @@ export class Task extends Emitter<TaskEvents> {
       if (answer.scope === 'domain' && this.deps.memory && model) this.deps.memory.addHint(hostOf(model.url), answer.text, bind);
       // With new knowledge the way in may be found on pages already looked at.
       this.entered.clear();
+      this.explored.clear();
     }
     if (answer.type === 'thresholds') this.liveConfidence = answer.value;
     if (answer.type === 'set_param') {
@@ -584,7 +640,13 @@ export class Task extends Emitter<TaskEvents> {
       this.status[answer.key] = 'pending';
       delete this.absentOn[answer.key];
     }
-    return answer;
+    if (answer.type === 'plan') {
+      if (this.plan) this.plan.replace(answer.steps);
+      else this.plan = new Plan(answer.steps);
+      this.entered.clear();
+      this.explored.clear();
+      this.note(`new plan: ${answer.steps.map((st) => st.do).join(' → ')}`);
+    }
   }
 
   private hintBinding(): { step?: string; key?: string; about?: string } {
@@ -632,8 +694,8 @@ export class Task extends Emitter<TaskEvents> {
       case 'apply_sort': return stepCard('apply_sort', `sort the results ${this.sortOrder()}`);
       case 'submit': return stepCard('submit', 'submit the search form');
       case 'dismiss_overlay': return stepCard('dismiss_overlay', `close the ${sub.overlayKind.replace(/_/g, ' ')} overlay`);
-      case 'enter': return stepCard('enter', 'open the part of the site where the goal is done');
-      case 'explore': return stepCard('explore', 'open the menu, tab or section of this page that may hold what the goal needs next');
+      case 'enter': return stepCard('enter', this.plan?.current ? `get to where this is done: ${this.plan.current.do}` : 'open the part of the site where the goal is done');
+      case 'explore': return stepCard('explore', this.plan?.current ? `open the menu, tab or section that may lead to: ${this.plan.current.do}` : 'open the menu, tab or section of this page that may hold what the goal needs next');
       case 'fill_any': return stepCard('fill_any', 'choose a value for a required field that no param covers');
       default: return stepCard(sub.type, label(sub));
     }
@@ -657,6 +719,102 @@ export class Task extends Emitter<TaskEvents> {
       this.journal.addFact('signed_in', 'The user is already signed in: sign-in details are not needed.', this.stepIdx);
       this.note(`already signed in: ${keys.join(', ')} not needed`);
     }
+  }
+
+  /** Working memory and the plan, for questions about where to go. */
+  private contextFor(): Record<string, Json> | undefined {
+    const mem = this.journal.forQuestion();
+    const plan = this.plan?.forState();
+    if (!mem && !plan) return undefined;
+    return { ...(mem ?? {}), ...(plan ? { plan } : {}) };
+  }
+
+  /** Milestones whose done_when the page shows are done (the next one too, when it is already true). */
+  private advancePlan(a: AssessOutput): void {
+    const plan = this.plan;
+    if (!plan || plan.finished || a.milestoneDone === undefined) return;
+    const yes = (v?: number) => v !== undefined && gateNoul(v, this.th().assess.noul) === 'yes';
+    if (!yes(a.milestoneDone)) return;
+    const done = [plan.current!.do];
+    const skip = yes(a.nextMilestoneDone) && !!plan.next;
+    if (skip) done.push(plan.next!.do);
+    plan.advance(skip ? 2 : 1);
+    this.entered.clear();
+    this.explored.clear();
+    this.note(`milestone done: ${done.join('; ')}${plan.current ? `; now: ${plan.current.do}` : '; plan complete'}`);
+  }
+
+  /** Progress: a higher level, a param or form step done, a milestone. Without it for a while, the agent is asked. */
+  private trackProgress(a: AssessOutput): void {
+    const level = a.progress?.level ?? -1;
+    const key = JSON.stringify([this.status, this.anyGroups.size, this.submitsDone, this.plan?.index ?? -1]);
+    if (level > this.bestLevel || key !== this.progressKey) {
+      this.bestLevel = Math.max(this.bestLevel, level);
+      this.progressKey = key;
+      this.lastProgressStep = this.stepIdx;
+    }
+  }
+
+  /**
+   * At the start of a step: apply the agent's answer to an open consult, withdraw it when the task found its way
+   * meanwhile, or open one when there has been no progress for a while. Returns a step the answer asks for.
+   */
+  private async consultBoundary(model: Model, a: AssessOutput): Promise<Subintent | null> {
+    const c = this.consultQ;
+    if (!c) {
+      if (this.stepIdx - this.lastProgressStep >= this.deps.getConfig().limits.stallSteps) {
+        await this.openConsult(`no progress toward the goal for ${this.stepIdx - this.lastProgressStep} steps`, model, a);
+      }
+      return null;
+    }
+    if (c.answer) {
+      this.consultQ = null;
+      this.lastProgressStep = this.stepIdx;
+      const ans = c.answer;
+      if (!this.pending) this.note(`answer to consult: ${ans.type}`);
+      this.applyAnswer('consult', ans);
+      if (ans.type === 'goto') {
+        if (domainAllowed(ans.url, [...(this.spec.policy.allowed_domains ?? []), ...this.extraDomains]) || !this.spec.policy.allowed_domains?.length) return { type: 'goto', url: ans.url };
+        this.note(`not opening ${ans.url}: outside the allowed domains`);
+      }
+      if (ans.type === 'pick' && model.elements.has(ans.ref)) {
+        this.forcedRef = { sub: 'enter', ref: ans.ref };
+        return { type: 'enter' };
+      }
+      return null;
+    }
+    // The task found its way meanwhile: the question is withdrawn so the agent is not bothered.
+    if ((a.progress?.level ?? -1) > c.level || (this.plan?.index ?? 0) > c.milestone || this.stepIdx === this.lastProgressStep) {
+      this.consultQ = null;
+      this.emit('withdrawn', { question_id: c.q.question_id, reason: 'the task found its way meanwhile' });
+      this.note(`withdrew the question to the agent: the task found its way`);
+    }
+    return null;
+  }
+
+  /** Asks the agent for help without stopping: published now, answered whenever the agent gets to it. */
+  private async openConsult(reason: string, model: Model, a?: AssessOutput): Promise<void> {
+    if (this.consultQ || this.finished) return;
+    const assess = a ?? this.assessCache?.out;
+    const exploreSteps = this.deps.getConfig().limits.consultExploreSteps;
+    const report = consultReport({
+      reason, goal: this.spec.goal, plan: this.plan?.forState(), progress: assess?.progress, situation: assess?.situation,
+      memory: this.journal.forQuestion(), overview: renderOverview(model, 1500), exploreSteps,
+    });
+    const q = await this.makeQuestion('consult', `Stuck: ${reason}. Send a plan (milestones with done_when), a hint, a URL to open (goto) or an element to click (pick); the task keeps exploring safe steps meanwhile.`, {
+      context: report, answer_with: CONSULT_ANSWERS,
+    });
+    this.consultQ = { q, level: assess?.progress?.level ?? -1, milestone: this.plan?.index ?? 0, explored: 0 };
+    this.lastProgressStep = this.stepIdx;
+    this.emit('escalation', q);
+    this.note(`asked the agent for help: ${reason}`);
+  }
+
+  /** Steps that can be undone and give nothing away: allowed while the agent is being asked. */
+  private safeWhileAsking(sub: Subintent): boolean {
+    if (sub.type === 'submit' || sub.type === 'await_agent') return false;
+    if (sub.type === 'fill_param' && this.params[sub.key]?.secret) return false;
+    return true;
   }
 
   /**
@@ -714,7 +872,7 @@ export class Task extends Emitter<TaskEvents> {
     const full: Intent = { ...intent, trial, exclude: [...(intent.exclude ?? []), ...tried.map((t) => t.sig)] };
     const card = this.card(sub);
     // Where to go is decided with the working memory; one field is found without it.
-    const memory = sub.type === 'enter' ? this.journal.forQuestion() : undefined;
+    const memory = sub.type === 'enter' || sub.type === 'explore' ? this.contextFor() : undefined;
     const gctx = { goal: this.spec.goal, step: card, hints: hintsFor(this.hints, card), memory, budgetTokens: this.budget() };
     return { th, tried, trial, card, intent: full, gctx, key: JSON.stringify([model.signature, full, gctx.hints, memory, th.ground]) };
   }
@@ -799,7 +957,9 @@ export class Task extends Emitter<TaskEvents> {
       // Reversible steps verify and roll back whatever the confidence: a confident pick can still be the wrong list.
       return { el, res, trial };
     }
-    if (res.decision === 'none' || opts.quiet) return { el: null, res };
+    // While the agent is being asked about the way, navigation picks do not ask again.
+    const consulting = !!this.consultQ && !this.consultQ.answer && (sub.type === 'enter' || sub.type === 'explore');
+    if (res.decision === 'none' || opts.quiet || consulting) return { el: null, res };
     const thc = th.ground.choice;
     const triedNote = tried.length ? ` Already tried and rolled back: ${tried.map((t) => t.desc).join('; ')}.` : '';
     const answer = await this.escalate('ground', `Unsure which element is ${intent.target}.${triedNote}`, {
@@ -919,20 +1079,28 @@ export class Task extends Emitter<TaskEvents> {
     const assess = await this.assess(model);
     timings.assess = this.now() - t1;
     if (assess.progress) this.journal.setProgress(assess.progress.level);
-    const sub = await this.chooseSubintent(model, assess);
-    this.lastSub = sub;
-    const subLabel = label(sub);
+    this.advancePlan(assess);
+    this.trackProgress(assess);
+    const pre = await this.consultBoundary(model, assess);
+    let sub = pre ?? await this.chooseSubintent(model, assess);
+    // While the agent is being asked, only safe steps go on; anything else (a submit, a secret) waits for the answer.
+    const c = this.consultQ;
+    if (c && !c.answer && !pre && sub.type !== 'done' && sub.type !== 'blocker') {
+      if (!this.safeWhileAsking(sub) || c.explored >= this.deps.getConfig().limits.consultExploreSteps) sub = { type: 'await_agent' };
+      else c.explored++;
+    }
+    let subLabel = label(sub);
     const loopKey = `${model.signature}|${subLabel}`;
     const seen = (this.seen.get(loopKey) ?? 0) + 1;
     this.seen.set(loopKey, seen);
-    if (seen >= 3 && !['extract', 'load_more', 'done', 'wait'].includes(sub.type)) {
+    if (seen >= 3 && !['extract', 'load_more', 'done', 'wait', 'await_agent'].includes(sub.type)) {
+      // Going in circles: ask the agent (with the whole picture) and wait for the answer.
       this.seen.set(loopKey, 0);
-      const a = await this.escalate('stuck', `Repeating "${subLabel}" on the same page state without progress.`, {
-        context: { subintent: subLabel }, answer_with: ['hint', 'set_param', 'skip', 'continue', 'abort'],
-      });
-      if (a.type === 'skip' && 'key' in sub) this.status[sub.key] = 'skipped';
-      return;
+      await this.openConsult(`repeating "${subLabel}" on the same page state without progress`, model, assess);
+      sub = { type: 'await_agent' };
+      subLabel = label(sub);
     }
+    this.lastSub = sub;
 
     const t2 = this.now();
     let out: Outcome;
@@ -996,7 +1164,7 @@ export class Task extends Emitter<TaskEvents> {
       && this.openedByUs.has(r.sig) && !this.goesOn.has(r.sig)).map((r) => r.id);
     const signInPending = Object.keys(this.params).some((k) => this.status[k] === 'pending' && isSignInParam(k, this.params[k].about));
     const cached = this.assessCache?.sig === model.signature ? this.assessCache.out : null;
-    if (cached && (!opts.leads || cached.leads !== undefined) && (!signInPending || cached.signedIn !== undefined)
+    if (cached && this.assessCache?.plan === (this.plan?.index ?? -1) && (!opts.leads || cached.leads !== undefined) && (!signInPending || cached.signedIn !== undefined)
       && goesOnRegions.every((id) => cached.goesOn[id] !== undefined)) return cached;
     const overlays = [
       ...model.regions.filter((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking),
@@ -1017,11 +1185,14 @@ export class Task extends Emitter<TaskEvents> {
       checkLeads: opts.leads,
       goesOnRegions,
       checkSignedIn: signInPending,
+      plan: this.plan?.forState(),
+      milestoneDoneWhen: this.plan?.current?.done_when,
+      nextMilestoneDoneWhen: this.plan?.next?.done_when,
       facts: this.journal.facts.map((f) => f.text),
     };
     const res = await runQuestions(this.qctx(), buildAssess(input));
     const out = readAssess(res.answers, input);
-    this.assessCache = { sig: model.signature, out };
+    this.assessCache = { sig: model.signature, out, plan: this.plan?.index ?? -1 };
     return out;
   }
 
@@ -1138,7 +1309,10 @@ export class Task extends Emitter<TaskEvents> {
     // A step of the goal still open on top (the payment dialog) means it is not reached yet.
     // Done when JEV says so, or when the page is at the last level of progress and the goal check does not object.
     const doneByProgress = !!a.progress && a.progress.level === 4 && a.progress.p >= th.assess.choice.act && gateNoul(a.goalReached, th.assess.noul) !== 'no';
-    if (!this.spec.result && (yes(a.goalReached) || doneByProgress) && !goalDialog && Object.entries(this.status).every(([k, s]) => s !== 'pending' || this.absentOn[k] !== undefined)) {
+    // With a plan, the last milestone's condition decides; the goal check only must not object.
+    const planDone = !!this.plan && this.plan.finished && gateNoul(a.goalReached, th.assess.noul) !== 'no';
+    const reached = this.plan ? planDone || (yes(a.goalReached) && doneByProgress) : yes(a.goalReached) || doneByProgress;
+    if (!this.spec.result && reached && !goalDialog && Object.entries(this.status).every(([k, s]) => s !== 'pending' || this.absentOn[k] !== undefined)) {
       return { type: 'done', reason: 'goal reached' };
     }
     // A dialog of the goal is worked through whatever the page under it is (a list, a results page).
@@ -1223,20 +1397,15 @@ export class Task extends Emitter<TaskEvents> {
     options.push({ id: 'go_back', description: 'Go back to the previous page.' });
     options.push({ id: 'wait', description: 'Wait for the page to finish loading or updating.' });
     if (!this.spec.result) options.push({ id: 'done', description: 'The goal is already achieved; stop.' });
-    const res = await runQuestions(this.qctx(), buildDecide({ model, goal: this.spec.goal, params: this.params, progress: this.status, hints: hintsFor(this.hints), recent: this.recent, memory: this.journal.forQuestion(), options, budgetTokens: this.budget() }));
+    const res = await runQuestions(this.qctx(), buildDecide({ model, goal: this.spec.goal, params: this.params, progress: this.status, hints: hintsFor(this.hints), recent: this.recent, memory: this.contextFor(), options, budgetTokens: this.budget() }));
     const choice = readDecide(res.answers);
     let pick = choice.choice;
     if (gateChoice(choice, this.th().subintent.choice) !== 'act') {
-      const answer = await this.escalate('subintent', 'Unsure what to do next on this page.', {
-        decision: {
-          template: 'decide.next_subintent', asked: 'Which step should be done next?', confidence: choice.confidence,
-          candidates: topCandidates(choice, 6).map((c) => ({ ref: c.key, p: c.p, desc: options.find((o) => o.id === c.key)?.description ?? c.key })),
-        },
-        context: { page_kind: a.pageKind },
-        answer_with: ['pick', 'hint', 'set_param', 'abort'],
-      });
-      if (answer.type !== 'pick') return { type: 'wait' };
-      pick = answer.ref;
+      // Unsure: ask the agent without stopping, and meanwhile take JEV's best step that can be undone.
+      await this.openConsult('unsure what to do next on this page', model, a);
+      const safe = topCandidates(choice, options.length).map((c) => c.key)
+        .find((k) => k !== 'done' && k !== 'submit' && !(k.startsWith('fill_') && this.params[k.slice(5)]?.secret));
+      pick = safe ?? 'wait';
     }
     if (pick.startsWith('fill_')) {
       const k = pick.slice(5);
@@ -1293,6 +1462,17 @@ export class Task extends Emitter<TaskEvents> {
       }
       case 'enter': return this.enter(sub, model);
       case 'explore': return this.explore(sub, model);
+      case 'goto': {
+        await (await this.page()).navigate(sub.url);
+        await this.settle();
+        return { outcome: 'ok', note: `opened ${sub.url} (the agent's answer)`, action: { type: 'navigate', url: sub.url } };
+      }
+      case 'await_agent': {
+        const q = this.consultQ;
+        if (!q || q.answer) return { outcome: 'ok', note: 'the agent already answered' };
+        q.answer = await this.waitAnswer(q.q, false);
+        return { outcome: 'ok', note: `waited for the agent's answer (${q.answer.type})` };
+      }
       case 'fill_any': return this.fillAny(sub, model);
       case 'reload': {
         this.reloaded.add(model.url);
@@ -1729,7 +1909,11 @@ export class Task extends Emitter<TaskEvents> {
   private async enter(sub: Subintent, model: Model): Promise<Outcome> {
     this.entered.add(model.signature);
     // No examples in the target: "Post an ad" among them drew JEV to posting when the goal was about an existing ad.
-    const target = 'the button or link that leads toward doing `goal`: it starts it, or opens the section or account area where it is done; not a search';
+    // With a plan, the current milestone is the target, spelled out (a pointer to it would be one more hop).
+    const m = this.plan?.current;
+    const target = m
+      ? `the button or link that leads toward this step: "${m.do}" (it starts it, or opens the section or account area where it is done); not a search`
+      : 'the button or link that leads toward doing `goal`: it starts it, or opens the section or account area where it is done; not a search';
     // With closed menus or sections on the page, an unsure pick is not asked about: exploring them comes first.
     const canExplore = !this.explored.has(model.signature) && this.openers(model).length > 0;
     // Ways in already taken lead here (an opener clicked again would only close its menu); links back to pages the
@@ -1744,10 +1928,8 @@ export class Task extends Emitter<TaskEvents> {
     if (!g.el) {
       // No sure way in: what the goal needs may sit in a closed menu or collapsed section of this page.
       if (canExplore) return this.explore({ type: 'explore' }, model);
-      const ans = await this.escalate('subintent', 'This page has no way to the goal, and no way into the right part of the site was found.', {
-        answer_with: ['hint', 'continue', 'abort'],
-      });
-      return { outcome: 'retry', note: `no way into the goal's section (${ans.type})` };
+      await this.openConsult('this page has no way to the goal, and no way into the right part of the site was found', model);
+      return { outcome: 'skipped', note: 'no way into the goal\'s section here; asked the agent' };
     }
     const before = this.model!;
     // A wrong way in is rolled back and this page may be tried again, without it.

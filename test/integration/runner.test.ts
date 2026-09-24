@@ -41,8 +41,8 @@ interface Script {
   actionClass?: string;
   /** Fixed answers for noul questions by id (e.g. `same`). */
   nouls?: Record<string, number>;
-  /** [question id pattern, choice]: fixed answers for other choice questions (e.g. overlay kinds). */
-  choices?: Array<[RegExp, string]>;
+  /** [question id pattern, choice, probability]: fixed answers for other choice questions (e.g. overlay kinds). */
+  choices?: Array<[RegExp, string, number?]>;
   /** Option pattern for "which option fits the goal" picks. */
   option?: RegExp;
   /** Noul answers that depend on the request (checked before `nouls`). */
@@ -101,8 +101,11 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
         const c = s.actionClass ?? 'search_submit';
         out[id] = { type: 'choice', choice: c, probabilities: { [c]: 1 }, confidence: 1 };
       } else if (q.type === 'choice') {
-        const k = s.choices?.find(([re]) => re.test(id))?.[1] ?? Object.keys(q.criteria)[0];
-        out[id] = { type: 'choice', choice: k, probabilities: { [k]: 1 }, confidence: 1 };
+        const rule = s.choices?.find(([re]) => re.test(id));
+        const k = rule?.[1] ?? Object.keys(q.criteria)[0];
+        const p = rule?.[2] ?? 1;
+        const others = Object.keys(q.criteria).filter((x) => x !== k);
+        out[id] = { type: 'choice', choice: k, probabilities: { [k]: p, ...Object.fromEntries(others.map((x) => [x, (1 - p) / others.length])) }, confidence: p };
       } else if (q.type === 'score') {
         const level = s.scores?.(id, req);
         if (level === undefined) continue;
@@ -452,5 +455,89 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(steps.map((st) => st.subintent).slice(0, 2)).toEqual(['explore', 'enter']);
     expect(task.state).toBe('done');
     expect(await page.evaluate('location.search')).toBe('?page=archive');
+  });
+  it('follows the agent\'s plan milestone by milestone', async () => {
+    const page = await h.open('account.html');
+    const url = (req: EvaluateRequest) => String((req.state as any).page?.url ?? '');
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [[/this step: "open my ads/i, /Кабинет/], [/menu item that leads/i, /Мои объявления/], [/this step: "open the unpaid/i, /Неоплаченные/]],
+      noulFn: (id, req) => {
+        const at = url(req);
+        if (id === 'milestone_done' || id === 'next_milestone_done') {
+          const text = JSON.stringify(req.questions[id]);
+          if (/lists my ads/.test(text)) return at.includes('view=ads') ? 0.95 : 0.05;
+          if (/unpaid ads/.test(text)) return at.includes('tab=unpaid') ? 0.95 : 0.05;
+        }
+        return undefined;
+      },
+      goalReached: (req) => (url(req).includes('tab=unpaid') ? 0.5 : 0.05),
+    });
+    const task = makeTask({
+      goal: 'Show my unpaid ads',
+      plan: [{ do: 'open my ads in the account', done_when: 'the page lists my ads' }, { do: 'open the unpaid ads', done_when: 'the page lists my unpaid ads' }],
+    }, page, jev);
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: 'abort' }), 10); });
+    await task.start();
+    const notes = trace.getSteps(task.id).map((st) => (st.notes as { note?: string } | null)?.note ?? '').join(' | ');
+    expect(questions.map((q) => q.summary), notes).toEqual([]);
+    expect(task.state).toBe('done');
+    expect(await page.evaluate('location.search')).toContain('tab=unpaid');
+    expect((task.statusView() as any).plan.index).toBe(2);
+  });
+
+  it('asks the agent without stopping, explores meanwhile and applies the answer at the next step', async () => {
+    const page = await h.open('menus.html');
+    const url = (req: EvaluateRequest) => String((req.state as any).page?.url ?? '');
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [],
+      choices: [[/^next$/, 'scroll', 0.4]],
+      goalReached: (req) => (url(req).includes('page=archive') ? 0.95 : 0.5),
+    });
+    const task = makeTask({ goal: 'Open my order archive' }, page, jev);
+    const archive = (await page.url()).replace(/menus\.html.*/, 'menus.html?page=archive');
+    const questions: any[] = [];
+    let stepsAfterQuestion = 0;
+    task.on('step', () => { if (questions.length) stepsAfterQuestion++; });
+    task.on('escalation', (q) => {
+      questions.push(q);
+      // Answer only after the task went on by itself for a step.
+      const tick = setInterval(() => {
+        if (stepsAfterQuestion < 1) return;
+        clearInterval(tick);
+        task.answer(q.question_id, q.kind === 'consult' ? { type: 'goto', url: archive } : { type: 'abort' });
+      }, 5);
+    });
+    await task.start();
+    const steps = trace.getSteps(task.id).map((st) => `${st.subintent}: ${(st.notes as { note?: string } | null)?.note ?? ''}`);
+    expect(questions.map((q) => q.kind), steps.join(' | ')).toEqual(['consult']);
+    expect(questions[0].context.page).toMatch(/Регионы|r\d/);
+    expect(stepsAfterQuestion).toBeGreaterThanOrEqual(1);
+    expect(steps.some((st) => st.startsWith('goto'))).toBe(true);
+    expect(task.state).toBe('done');
+  });
+
+  it('withdraws the question to the agent when the task finds its way meanwhile', async () => {
+    const page = await h.open('account.html');
+    const url = (req: EvaluateRequest) => String((req.state as any).page?.url ?? '');
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [[/leads toward doing/i, /Кабинет/], [/menu item that leads/i, /Мои объявления/]],
+      choices: [[/^next$/, 'enter', 0.4]],
+      scores: (id, req) => (id === 'progress' ? (url(req).includes('view=ads') ? 2 : 1) : undefined),
+      goalReached: (req) => (url(req).includes('view=ads') ? 0.95 : 0.5),
+    });
+    const task = makeTask({ goal: 'Open the list of my ads in the account' }, page, jev);
+    const questions: any[] = [];
+    const withdrawn: any[] = [];
+    task.on('withdrawn', (w) => withdrawn.push(w));
+    task.on('escalation', (q) => { questions.push(q); });
+    await task.start();
+    expect(questions.map((q) => q.kind)).toEqual(['consult']);
+    expect(withdrawn.map((w) => w.question_id)).toEqual([questions[0].question_id]);
+    expect(task.openQuestions).toEqual([]);
+    expect(task.state).toBe('done');
   });
 });

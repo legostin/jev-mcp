@@ -90,6 +90,10 @@ export const configSchema = z.object({
     settleMaxMs: z.number().int().positive().default(10_000),
     stateTokenTarget: z.number().int().min(500).max(28_000).default(6000),
     awaitInputPauseMinutes: z.number().positive().default(30),
+    /** Steps without progress (level, params, milestones) before the task asks the agent for help. */
+    stallSteps: z.number().int().min(2).default(6),
+    /** Safe steps the task explores while waiting for the agent's answer, before it waits. */
+    consultExploreSteps: z.number().int().min(0).default(6),
   }).prefault({}),
   trace: z.object({
     retentionDays: z.number().positive().default(7),

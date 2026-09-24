@@ -53,6 +53,10 @@ export interface AssessInput {
   checkSignedIn?: boolean;
   /** Facts the task established (working memory). */
   facts?: string[];
+  /** The agent's plan: done/now/then, and the done_when conditions of the current and next milestone. */
+  plan?: Record<string, Json>;
+  milestoneDoneWhen?: string;
+  nextMilestoneDoneWhen?: string;
   /** Dialogs the task's own click opened that may be a step of the goal: can the goal go on from them? */
   goesOnRegions?: string[];
 }
@@ -75,6 +79,9 @@ export interface AssessOutput {
   leads?: number;
   /** Asked with `checkSignedIn` only. */
   signedIn?: number;
+  /** Is the current (and the next) milestone's done_when true on the page? */
+  milestoneDone?: number;
+  nextMilestoneDone?: number;
   /** How far along the way to the goal the page is (0-4). */
   progress?: Progress;
   /** What stands in the way right now. */
@@ -142,6 +149,9 @@ export function buildAssess(input: AssessInput): QuestionSet {
   }
   if (input.checkLeads) questions.leads = { type: 'noul', instructions: LEADS_QUESTION };
   if (input.checkSignedIn) questions.signed_in = { type: 'noul', instructions: SIGNED_IN_QUESTION };
+  // The condition itself goes into the question: a pointer to it would be one more hop for JEV.
+  if (input.milestoneDoneWhen) questions.milestone_done = { type: 'noul', instructions: `Is this true of \`page\`: ${input.milestoneDoneWhen}` };
+  if (input.nextMilestoneDoneWhen) questions.next_milestone_done = { type: 'noul', instructions: `Is this true of \`page\`: ${input.nextMilestoneDoneWhen}` };
   for (const id of input.goesOnRegions ?? []) questions[`goes_on_${id}`] = { type: 'noul', instructions: goesOnQuestion(id) };
   const required: Record<string, string> = {};
   for (const e of input.requiredEmpty.slice(0, 8)) {
@@ -153,7 +163,7 @@ export function buildAssess(input: AssessInput): QuestionSet {
   }
   const state = buildState({
     goal: input.goal, params: input.params, hints: input.hints, progress: input.progress,
-    memory: input.facts?.length ? { facts: input.facts } : undefined,
+    memory: input.facts?.length || input.plan ? { ...(input.facts?.length ? { facts: input.facts } : {}), ...(input.plan ? { plan: input.plan } : {}) } : undefined,
     page: { url: model.url, title: model.title, regions: regionLines(model), elements: elementLines(model, summaryRefs(model)) },
     extra: Object.keys(required).length ? { required_fields: required as unknown as Json } : undefined,
   }, input.budgetTokens);
@@ -186,6 +196,8 @@ export function readAssess(answers: Record<string, Answer>, input: AssessInput):
     paramHere: Object.fromEntries((input.pendingParams ?? []).map((k) => [k, noulOf(answers, `param_here_${k}`)])),
     leads: input.checkLeads ? noulOf(answers, 'leads') : undefined,
     signedIn: input.checkSignedIn ? noulOf(answers, 'signed_in') : undefined,
+    milestoneDone: input.milestoneDoneWhen ? noulOf(answers, 'milestone_done') : undefined,
+    nextMilestoneDone: input.nextMilestoneDoneWhen ? noulOf(answers, 'next_milestone_done') : undefined,
     progress: readProgress(answers),
     situation: readSituation(answers),
     goesOn: Object.fromEntries((input.goesOnRegions ?? []).map((id) => [id, noulOf(answers, `goes_on_${id}`)])),

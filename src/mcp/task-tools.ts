@@ -41,11 +41,20 @@ export function formatQuestion(q: Escalation): string {
     const th = q.decision.thresholds;
     lines.push(`Confidence ${q.decision.confidence.toFixed(2)}${th ? ` (acts at ≥ ${th.act}, asks below ${th.escalate})` : ''}`);
   }
-  if (q.context && Object.keys(q.context).length) lines.push(`Context: ${JSON.stringify(q.context)}`);
+  if (q.kind === 'consult' && q.context) {
+    // The task keeps exploring while this is open: a plan or a hint helps most.
+    const c = q.context as Record<string, any>;
+    if (c.plan) lines.push(`Plan: ${JSON.stringify(c.plan)}`);
+    if (c.jev_sees) lines.push(`JEV sees: ${Object.entries(c.jev_sees).map(([k, v]) => `${k} ${v}`).join('; ')}`);
+    if (c.task_memory) lines.push(`Task memory: ${JSON.stringify(c.task_memory)}`);
+    if (c.meanwhile) lines.push(`Meanwhile: ${c.meanwhile}`);
+    if (c.page) lines.push(`Page now:\n${c.page}`);
+  } else if (q.context && Object.keys(q.context).length) lines.push(`Context: ${JSON.stringify(q.context)}`);
   if (q.recent_steps?.length) lines.push(`Recent steps: ${q.recent_steps.slice(-4).join(' → ')}`);
   lines.push(`Answer with jev_answer {question_id: "${q.question_id}", type: ${q.answer_with.map((a) => `"${a}"`).join(' | ')}, ...}.`);
   lines.push('  pick → ref (element or candidate id); none → the target is not on this page; hint → text (scope "domain" keeps it for this site); set_param → key, value, about;');
   lines.push('  thresholds → confidence; continue → proceed (after you acted yourself or to confirm a risky step); skip; abort. remember:true stores a pick for this site.');
+  if (q.kind === 'consult') lines.push('  plan → steps [{do, done_when}] (English; replaces what is left of the plan); goto → url of a page to open. A hint with scope "domain" also helps the next task on this site.');
   lines.push('Use jev_observe / jev_find / jev_screenshot on the task tab if you need to look first.');
   return lines.join('\n');
 }
@@ -110,6 +119,10 @@ export function registerTaskTools(server: McpServer, deps: ToolDeps): void {
       site: z.string().optional().describe('Start URL. Omit to use the current tab (tab:"current").'),
       tab: z.string().optional().describe('Run in this tab id, or "current".'),
       params: z.record(z.string(), paramArg).optional().describe('Named inputs, e.g. {"from": {"value": "Алматы", "about": "departure city"}}.'),
+      plan: z.array(z.object({
+        do: z.string().describe('What to do, in English ("open the account\'s unpaid ads").'),
+        done_when: z.string().describe('How the page shows it is done, in English ("the page lists my unpaid ads").'),
+      })).max(12).optional().describe('Milestones for multi-step goals, from what you know about the site (System 2). JEV aims at the current one and checks each done_when on the page; without a plan it finds the way itself.'),
       result: z.object({
         select: z.string().optional().describe('all | first | min(field) | max(field): min/max make JEV sort the list on the site (e.g. min(price)).'),
         extract: z.enum(['agent', 'code']).optional().describe('"agent" (default): you get the results list as text and pick the answer. "code": items are parsed by schema.'),
@@ -170,10 +183,12 @@ export function registerTaskTools(server: McpServer, deps: ToolDeps): void {
 
   server.registerTool('jev_answer', {
     title: 'Answer a JEV question',
-    description: 'Resolve a pending question (escalation). type: pick (ref), none (the target is not on this page; the task then looks behind "more filters" or moves on), hint (text, scope), set_param (key, value, about, secret), thresholds (confidence), continue, skip, abort (reason). remember:true stores a pick as site memory.',
+    description: 'Resolve a pending question (escalation). type: pick (ref), none (the target is not on this page; the task then looks behind "more filters" or moves on), hint (text, scope), set_param (key, value, about, secret), thresholds (confidence), continue, skip, abort (reason); for consult questions also plan (steps [{do, done_when}]) and goto (url). remember:true stores a pick as site memory.',
     inputSchema: {
       question_id: z.string(),
-      type: z.enum(['pick', 'none', 'hint', 'set_param', 'thresholds', 'continue', 'skip', 'abort']),
+      type: z.enum(['pick', 'none', 'hint', 'set_param', 'thresholds', 'continue', 'skip', 'abort', 'plan', 'goto']),
+      steps: z.array(z.object({ do: z.string(), done_when: z.string() })).optional().describe('For type "plan": milestones that replace what is left of the plan.'),
+      url: z.string().optional().describe('For type "goto": a page to open (within the allowed domains).'),
       ref: z.string().optional(),
       text: z.string().optional(),
       scope: z.enum(['task', 'domain']).optional(),
@@ -193,6 +208,8 @@ export function registerTaskTools(server: McpServer, deps: ToolDeps): void {
       case 'set_param': if (!a.key || a.value === undefined) return errorResult('set_param needs key and value'); answer = { type: 'set_param', key: a.key, value: a.value, about: a.about, secret: a.secret }; break;
       case 'thresholds': if (!a.confidence) return errorResult('thresholds needs confidence'); answer = { type: 'thresholds', value: a.confidence }; break;
       case 'abort': answer = { type: 'abort', reason: a.reason }; break;
+      case 'plan': if (!a.steps?.length) return errorResult('plan needs steps [{do, done_when}]'); answer = { type: 'plan', steps: a.steps }; break;
+      case 'goto': if (!a.url) return errorResult('goto needs url'); answer = { type: 'goto', url: a.url }; break;
       default: answer = { type: a.type };
     }
     const r = await bridge.call('task.answer', { question_id: a.question_id, answer, remember: a.remember });

@@ -12,7 +12,8 @@ import { newId } from '../core/util/ids.ts';
 
 const log = logger('tasks');
 
-export type TaskEventType = 'question' | 'done' | 'state' | 'step';
+/** `question_withdrawn`: a consult the task no longer needs (it found its way meanwhile). */
+export type TaskEventType = 'question' | 'question_withdrawn' | 'done' | 'state' | 'step';
 export interface TaskEvent { type: TaskEventType; task_id: string; session: string; at: number; payload: unknown }
 
 interface Waiter {
@@ -147,6 +148,7 @@ export class TaskManager {
   private adopt(task: Task): void {
     this.tasks.set(task.id, task);
     task.on('escalation', (q) => this.publish(task, 'question', q));
+    task.on('withdrawn', (w) => this.publish(task, 'question_withdrawn', w));
     task.on('done', (r) => this.publish(task, 'done', r));
     task.on('state', (s) => this.publish(task, 'state', s));
     task.on('step', (s) => this.publish(task, 'step', s));
@@ -187,12 +189,12 @@ export class TaskManager {
 
   pending(sessionId?: string): Escalation[] {
     return [...this.tasks.values()]
-      .filter((t) => (!sessionId || t.sessionId === sessionId) && t.pendingQuestion)
-      .map((t) => t.pendingQuestion!);
+      .filter((t) => !sessionId || t.sessionId === sessionId)
+      .flatMap((t) => t.openQuestions);
   }
 
   byQuestion(questionId: string): Task | null {
-    for (const t of this.tasks.values()) if (t.pendingQuestion?.question_id === questionId) return t;
+    for (const t of this.tasks.values()) if (t.openQuestions.some((q) => q.question_id === questionId)) return t;
     return null;
   }
 

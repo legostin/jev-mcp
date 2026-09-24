@@ -144,6 +144,30 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(questions.every((q: any) => q.kind === 'risk_confirm')).toBe(true);
   }, 400_000);
 
+  it('follows the agent\'s plan to pay for an unpaid ad', async () => {
+    const created = await client.call('task.create', {
+      goal: 'Pay for the publication of my unpaid car ad (Toyota Camry, 2015) with the saved bank card',
+      site: fixtures.url('account.html?notice=1'),
+      plan: [
+        { do: 'open my ads in the account', done_when: 'the page lists my ads' },
+        { do: 'open the unpaid ads', done_when: 'the page lists my unpaid ads, waiting for payment' },
+        { do: 'pay for the unpaid ad with the saved card', done_when: 'the page confirms that the ad was paid' },
+      ],
+      policy: { fill_required: 'any', irreversible: 'ask' },
+    });
+    const { result, questions } = await runToEnd(created.task_id, (q) => (q.kind === 'risk_confirm' ? { type: 'continue' } : pickTop(q)), 6);
+    const trace = await client.call('task.trace', { task_id: created.task_id });
+    for (const s of trace.steps) console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''}`);
+    for (const q of questions) console.log(`question ${q.kind}: ${q.summary}`);
+    expect(result.status).toBe('done');
+    const notes = trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ');
+    expect(notes).toMatch(/Сохранённая карта/);
+    expect(notes).toMatch(/Оплатить 1 500/);
+    expect(questions.every((q: any) => q.kind === 'risk_confirm')).toBe(true);
+    const status = await client.call('task.status', { task_id: created.task_id }).catch(() => null);
+    void status;
+  }, 400_000);
+
   it('finds a link hidden in a collapsed section of the page', async () => {
     const created = await client.call('task.create', { goal: 'Open my order archive', site: fixtures.url('menus.html') });
     const { result, questions } = await runToEnd(created.task_id, pickTop);

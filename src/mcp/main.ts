@@ -35,6 +35,7 @@ export async function runMcpServer(): Promise<void> {
     if (method !== 'task.event' || !ev?.channel) return;
     if (ev.type === 'question') push(formatQuestion(ev.payload), { task_id: ev.task_id, question_id: ev.payload.question_id, kind: ev.payload.kind });
     else if (ev.type === 'done') push(formatResult(ev.task_id, ev.payload), { task_id: ev.task_id, status: String(ev.payload?.status ?? 'done') });
+    else if (ev.type === 'question_withdrawn') push(`Question ${ev.payload.question_id} from task ${ev.task_id} is withdrawn: ${ev.payload.reason}. No answer needed.`, { task_id: ev.task_id, question_id: ev.payload.question_id, kind: 'withdrawn' });
   });
   server.server.oninitialized = () => {
     initialized = true;

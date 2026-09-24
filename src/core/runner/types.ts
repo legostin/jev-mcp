@@ -14,6 +14,10 @@ export const paramSpecSchema = z.object({
   secret: z.boolean().optional(),
 });
 
+/** One milestone of the agent's plan: what to do, and how the page shows it is done (both in English). */
+export const planStepSchema = z.object({ do: z.string().min(3), done_when: z.string().min(3) });
+export type PlanStep = z.infer<typeof planStepSchema>;
+
 export const taskSpecSchema = z.object({
   goal: z.string().min(3),
   site: z.string().optional(),
@@ -28,6 +32,8 @@ export const taskSpecSchema = z.object({
     pages: z.number().int().min(1).max(10).default(1),
   }).refine((r) => r.extract !== 'code' || !!r.schema, 'extract "code" needs a schema').optional(),
   hints: z.array(z.string()).default([]),
+  /** Milestones from the agent (System 2): JEV checks each one's done_when on the page and aims at the current one. */
+  plan: z.array(planStepSchema).max(12).optional(),
   policy: z.object({
     confidence: confidenceSchema.optional(),
     irreversible: z.enum(['ask', 'allow']).optional(),
@@ -46,7 +52,8 @@ export type TaskSpec = z.infer<typeof taskSpecSchema>;
 export type TaskState = 'queued' | 'running' | 'awaiting_input' | 'paused' | 'interrupted' | 'done' | 'failed' | 'cancelled';
 export const FINAL_STATES: ReadonlySet<TaskState> = new Set(['done', 'failed', 'cancelled']);
 
-export type EscalationKind = 'ground' | 'subintent' | 'assess' | 'risk_confirm' | 'missing_param' | 'blocker' | 'stuck' | 'off_domain' | 'budget';
+/** `consult`: the task is stuck and asks the agent for a plan or a hint while it keeps exploring safe options. */
+export type EscalationKind = 'ground' | 'subintent' | 'assess' | 'risk_confirm' | 'missing_param' | 'blocker' | 'stuck' | 'off_domain' | 'budget' | 'consult';
 
 export interface Escalation {
   question_id: string;
@@ -77,6 +84,8 @@ export const answerSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('skip') }),
   z.object({ type: z.literal('none') }),
   z.object({ type: z.literal('abort'), reason: z.string().optional() }),
+  z.object({ type: z.literal('plan'), steps: z.array(planStepSchema).min(1).max(12) }),
+  z.object({ type: z.literal('goto'), url: z.string().url() }),
 ]);
 export type AnswerInput = z.infer<typeof answerSchema> & { remember?: boolean };
 
