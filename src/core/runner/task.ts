@@ -1564,11 +1564,23 @@ export class Task extends Emitter<TaskEvents> {
       return { outcome: 'ok', note: `opened ${el.ref} "${el.name}" to choose any value` };
     }
     const criteria: Record<string, null> = Object.fromEntries(options.map((o) => [o.key, null]));
+    const section = model.regions.find((r) => r.id === el.regionId)?.label ?? el.context ?? '';
     const res = await runQuestions(this.qctx(), {
       template: 'widget.any_option',
-      state: buildState({ goal: this.spec.goal, hints: hintsFor(this.hints), extra: { field: describeElement(el, { pageUrl: model.url }), options: Object.fromEntries(options.map((o) => [o.key, o.label])) } }, this.budget()),
-      questions: { pick: { type: 'choice', instructions: 'Which option in `options` fits `goal` and `hints` best? If nothing in them decides it, the first option.', criteria } },
+      state: buildState({
+        goal: this.spec.goal, params: this.params, hints: hintsFor(this.hints),
+        extra: { field: `${section ? `${section}: ` : ''}${describeElement(el, { pageUrl: model.url })}`, options: Object.fromEntries(options.map((o) => [o.key, o.label])) },
+      }, this.budget()),
+      questions: {
+        pick: { type: 'choice', instructions: 'Which option in `options` fits `goal` and `hints` best? If nothing in them decides it, the first option.', criteria },
+        // A param may already answer this field in another control (a year list next to quick year buttons).
+        covered: { type: 'noul', instructions: 'Does `field` ask for the same thing as one of `params` (for example the year, price or city)?' },
+      },
     });
+    if (noulOf(res.answers, 'covered') >= 0.5) {
+      this.anyGroups.add(sub.group);
+      return { outcome: 'ok', note: `left ${describeElement(el)} alone: a param already covers it` };
+    }
     const picked = options.find((o) => o.key === choiceOf(res.answers, 'pick').choice) ?? options[0];
     if (picked.value !== undefined) await page.selectOption(el.backendNodeId, picked.value, el.frameSessionId);
     else if (picked.el) await this.click(picked.el);

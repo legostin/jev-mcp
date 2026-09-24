@@ -7,7 +7,7 @@ const IRREVERSIBLE_WORDS = [
   'close account', 'publish', 'post', 'send', 'transfer', 'donate', 'submit order', 'confirm payment', 'order now',
   'оплатить', 'оплата', 'купить', 'оформить заказ', 'оформить', 'заказать', 'подтвердить заказ', 'подтвердить оплату',
   'подтвердить', 'забронировать', 'подписаться', 'зарегистрироваться', 'удалить', 'опубликовать', 'отправить', 'перевести',
-  'пожертвовать',
+  'пожертвовать', 'подать объявление', 'разместить', 'разместить объявление', 'place ad', 'place an ad', 'post ad', 'post an ad',
 ];
 const WORD_RE = new RegExp(`(?<![\\p{L}\\p{N}])(${IRREVERSIBLE_WORDS.map((w) => w.replace(/\s+/g, '\\s+')).join('|')})(?![\\p{L}\\p{N}])`, 'iu');
 const URL_RE = /\/(checkout|payment|payments|pay|order|orders|purchase|buy|billing)(\/|\?|$|\.)/i;
