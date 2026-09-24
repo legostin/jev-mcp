@@ -144,6 +144,16 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(questions.every((q: any) => q.kind === 'risk_confirm')).toBe(true);
   }, 400_000);
 
+  it('finds a link hidden in a collapsed section of the page', async () => {
+    const created = await client.call('task.create', { goal: 'Open my order archive', site: fixtures.url('menus.html') });
+    const { result, questions } = await runToEnd(created.task_id, pickTop);
+    const trace = await client.call('task.trace', { task_id: created.task_id });
+    for (const s of trace.steps) console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''} ${JSON.stringify(s.notes?.assess?.situation ?? null)}`);
+    expect(result.status).toBe('done');
+    expect(trace.steps.map((s: any) => s.url).join(' ')).toMatch(/page=archive/);
+    expect(questions).toHaveLength(0);
+  }, 300_000);
+
   it('finds the way into an ad wizard from a search page, fills it with any values where allowed and pays', async () => {
     const created = await client.call('task.create', {
       goal: 'Post a new car ad with the given details (no photos), publish it and pay for it with the saved bank card',

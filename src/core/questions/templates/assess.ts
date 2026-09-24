@@ -3,6 +3,7 @@ import type { ElementNode, PageModel, Region } from '../../perception/types.ts';
 import { describeElement, elementLines, regionLines } from '../../perception/render.ts';
 import { buildState, type ParamSpec } from '../state.ts';
 import { choiceOf, noulOf, type QuestionSet } from '../run.ts';
+import { PROGRESS_QUESTION, readProgress, readSituation, SITUATION_QUESTION, type Progress, type Situation } from './situation.ts';
 
 export const PAGE_KINDS = {
   search_form: 'A form to search or filter (fields for the search criteria and a search button) is the main content.',
@@ -74,6 +75,10 @@ export interface AssessOutput {
   leads?: number;
   /** Asked with `checkSignedIn` only. */
   signedIn?: number;
+  /** How far along the way to the goal the page is (0-4). */
+  progress?: Progress;
+  /** What stands in the way right now. */
+  situation?: { kind: Situation; confidence: number; probabilities: Record<string, number> };
   /** Per region in `goesOnRegions`. */
   goesOn: Record<string, number>;
 }
@@ -110,6 +115,8 @@ export function buildAssess(input: AssessInput): QuestionSet {
     page_kind: { type: 'choice', instructions: 'What kind of page is `page`?', criteria: { ...PAGE_KINDS } },
     // "Shows what the goal asks for" read a page where the action could still be done (an unpaid ad with its Pay
     // button) as done (0.8); asking for the outcome, with a confirmation required for actions, gives 0.1 there.
+    progress: PROGRESS_QUESTION,
+    situation: SITUATION_QUESTION,
     goal_reached: {
       type: 'noul',
       instructions: 'Is the outcome `goal` asks for already reached on `page`? For an action (post, pay, book, send), only a message confirming it was done counts: a page where it can still be done does not. For finding or opening something, the page must show it.',
@@ -179,6 +186,8 @@ export function readAssess(answers: Record<string, Answer>, input: AssessInput):
     paramHere: Object.fromEntries((input.pendingParams ?? []).map((k) => [k, noulOf(answers, `param_here_${k}`)])),
     leads: input.checkLeads ? noulOf(answers, 'leads') : undefined,
     signedIn: input.checkSignedIn ? noulOf(answers, 'signed_in') : undefined,
+    progress: readProgress(answers),
+    situation: readSituation(answers),
     goesOn: Object.fromEntries((input.goesOnRegions ?? []).map((id) => [id, noulOf(answers, `goes_on_${id}`)])),
   };
 }

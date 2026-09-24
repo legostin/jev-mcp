@@ -47,6 +47,8 @@ interface Script {
   option?: RegExp;
   /** Noul answers that depend on the request (checked before `nouls`). */
   noulFn?: (id: string, req: EvaluateRequest) => number | undefined;
+  /** Score answers (the level, given with probability 0.95), e.g. progress by page address. */
+  scores?: (id: string, req: EvaluateRequest) => number | undefined;
 }
 
 /** Scripted JEV: answers by question id with deterministic rules; records every request. */
@@ -101,6 +103,11 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
       } else if (q.type === 'choice') {
         const k = s.choices?.find(([re]) => re.test(id))?.[1] ?? Object.keys(q.criteria)[0];
         out[id] = { type: 'choice', choice: k, probabilities: { [k]: 1 }, confidence: 1 };
+      } else if (q.type === 'score') {
+        const level = s.scores?.(id, req);
+        if (level === undefined) continue;
+        const probabilities = Object.fromEntries(q.criteria.map((_, i) => [String(i), i === level ? 0.95 : 0.05 / (q.criteria.length - 1)]));
+        out[id] = { type: 'score', score: level, probabilities, legend: Object.fromEntries(q.criteria.map((c, i) => [String(i), String(c)])), confidence: 0.9 };
       } else if (q.type === 'noul') {
         let v = 0.05;
         if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same' || id === 'goal_is_search' || id === 'leads' || id.startsWith('goes_on') || id.startsWith('param_here_')) v = 0.95;
@@ -403,5 +410,47 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(task.state).toBe('done');
     expect(steps.some((st) => /phone|password/.test(st))).toBe(false);
     expect(task.statusView().progress).toEqual({ phone: 'not_needed', password: 'not_needed' });
+  });
+  it('rolls back a way in that lowers the progress toward the goal', async () => {
+    const page = await h.open('account.html');
+    const url = (req: EvaluateRequest) => String((req.state as any).page?.url ?? '');
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [[/menu item that leads/i, /Мои объявления/]],
+      ranks: [[/leads toward doing/i, [[/Подать объявление/, 0.6], [/Кабинет/, 0.3]]]],
+      // The new-ad form "leads toward" the goal for the entry check, but it is further from it than the start page.
+      scores: (id, req) => (id !== 'progress' ? undefined : url(req).includes('post.html') ? 0 : url(req).includes('view=ads') ? 2 : 1),
+      goalReached: (req) => (url(req).includes('view=ads') ? 0.95 : 0.05),
+    });
+    const task = makeTask({ goal: 'Open the list of my ads in the account' }, page, jev);
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: 'abort' }), 10); });
+    await task.start();
+    const notes = trace.getSteps(task.id).map((st) => (st.notes as { note?: string } | null)?.note ?? '').join(' | ');
+    expect(questions.map((q) => q.summary), notes).toEqual([]);
+    expect(notes).toMatch(/further from the goal \(level 1 → 0\)/);
+    expect(task.state).toBe('done');
+    expect(await page.evaluate('location.search')).toBe('?view=ads');
+  });
+
+  it('opens a collapsed section when JEV sees that what the goal needs is behind it', async () => {
+    const page = await h.open('menus.html');
+    const url = (req: EvaluateRequest) => String((req.state as any).page?.url ?? '');
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [[/opens a menu, tab or collapsed section/i, /Ещё/], [/leads toward doing/i, /Архив заказов/]],
+      choices: [[/^situation$/, 'behind_menu']],
+      goalReached: (req) => (url(req).includes('page=archive') ? 0.95 : 0.05),
+    });
+    const task = makeTask({ goal: 'Open my order archive' }, page, jev);
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: 'abort' }), 10); });
+    await task.start();
+    const steps = trace.getSteps(task.id);
+    const notes = steps.map((st) => `${st.subintent}: ${(st.notes as { note?: string } | null)?.note ?? ''}`).join(' | ');
+    expect(questions.map((q) => `${q.kind}: ${q.summary}`), notes).toEqual([]);
+    expect(steps.map((st) => st.subintent).slice(0, 2)).toEqual(['explore', 'enter']);
+    expect(task.state).toBe('done');
+    expect(await page.evaluate('location.search')).toBe('?page=archive');
   });
 });

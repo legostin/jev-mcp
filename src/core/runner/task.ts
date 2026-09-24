@@ -89,6 +89,7 @@ type Subintent =
   | { type: 'go_back' }
   | { type: 'reload' }
   | { type: 'enter' }
+  | { type: 'explore' }
   | { type: 'fill_any'; ref: string; group: string }
   | { type: 'wait' }
   | { type: 'done'; reason: string }
@@ -200,6 +201,13 @@ export class Task extends Emitter<TaskEvents> {
   private goesOn = new Map<string, boolean>();
   /** Choice groups already given "any" value. */
   private anyGroups = new Set<string>();
+  /** The step in which an irreversible action was approved (nothing to roll back after it). */
+  private riskApprovedAt = -1;
+  /** Page states already given a moment to load, or explored for menus and collapsed sections. */
+  private waitedOn = new Set<string>();
+  private explored = new Set<string>();
+  /** Menus and sections the task opened (never toggled closed again by exploring). */
+  private exploredVia = new Set<string>();
   /** Working memory: facts, pages passed, ways that did not work. */
   private journal = new Journal();
   /** A field search started ahead (see startPrefetch). */
@@ -625,6 +633,7 @@ export class Task extends Emitter<TaskEvents> {
       case 'submit': return stepCard('submit', 'submit the search form');
       case 'dismiss_overlay': return stepCard('dismiss_overlay', `close the ${sub.overlayKind.replace(/_/g, ' ')} overlay`);
       case 'enter': return stepCard('enter', 'open the part of the site where the goal is done');
+      case 'explore': return stepCard('explore', 'open the menu, tab or section of this page that may hold what the goal needs next');
       case 'fill_any': return stepCard('fill_any', 'choose a value for a required field that no param covers');
       default: return stepCard(sub.type, label(sub));
     }
@@ -648,6 +657,53 @@ export class Task extends Emitter<TaskEvents> {
       this.journal.addFact('signed_in', 'The user is already signed in: sign-in details are not needed.', this.stepIdx);
       this.note(`already signed in: ${keys.join(', ')} not needed`);
     }
+  }
+
+  /**
+   * What JEV recognises about the page (loading, content further down, a closed menu, the wrong part of the site),
+   * mapped to the step that handles it. Only a confident recognition; each handler once per page state.
+   */
+  private fromSituation(model: Model, a: AssessOutput): Subintent | null {
+    const sit = a.situation;
+    const th = this.th();
+    if (!sit || sit.confidence < th.assess.choice.act || (a.progress?.level ?? 0) >= 4) return null;
+    const sig = model.signature;
+    switch (sit.kind) {
+      case 'loading':
+        if (this.waitedOn.has(sig)) return null;
+        this.waitedOn.add(sig);
+        return { type: 'wait' };
+      case 'below_fold':
+        return model.scroll.y < model.scroll.maxY - 20 ? { type: 'scroll' } : null;
+      case 'behind_menu':
+        if (!this.explored.has(sig) && this.openers(model).length) return { type: 'explore' };
+        return this.entered.has(sig) ? null : { type: 'enter' };
+      case 'wrong_place':
+        return this.entered.has(sig) ? null : { type: 'enter' };
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * A way in or a submit that led further from the goal (the progress level dropped, both levels confidently) is
+   * rolled back like a failed trial, unless an irreversible action was approved in this step.
+   */
+  private async checkProgress(sub: Subintent, model: Model, before: AssessOutput, out: Outcome): Promise<Outcome> {
+    if ((sub.type !== 'enter' && sub.type !== 'submit') || this.riskApprovedAt === this.stepIdx || !before.progress) return out;
+    const ref = (out.action as { ref?: string } | undefined)?.ref;
+    const el = ref ? model.elements.get(ref) : undefined;
+    if (!el) return out;
+    const now = await this.observe(false);
+    if (now.signature === model.signature) return out;
+    // Assessed now and cached: the next step uses the same assessment.
+    const after = await this.assess(now);
+    const act = this.th().assess.choice.act;
+    if (!after.progress || before.progress.p < act || after.progress.p < act || after.progress.level >= before.progress.level) return out;
+    if (sub.type === 'enter') this.entered.delete(model.signature);
+    if (sub.type === 'submit') this.dirty = true;
+    const back = await this.trialFailed(sub, el, model, `the page it opened is further from the goal (level ${before.progress.level} → ${after.progress.level})`);
+    return { ...back, note: `${out.note}; ${back.note}` };
   }
 
   /** Everything a grounding question depends on, and a key that is equal only for the same question. */
@@ -688,7 +744,8 @@ export class Task extends Emitter<TaskEvents> {
    * result means the step is reversible and has tries left: the caller verifies the effect and calls `trialFailed`
    * (roll back, try the next candidate) when it did not work. Low-confidence leaders are only returned as trials.
    */
-  private async ground(sub: Subintent, intent: Intent, memoryKey?: string): Promise<{ el: ElementNode | null; res?: GroundResult; answer?: AnswerInput; trial?: boolean }> {
+  /** `quiet`: when unsure, return no element instead of asking (the caller has another way to go on). */
+  private async ground(sub: Subintent, intent: Intent, memoryKey?: string, opts: { quiet?: boolean } = {}): Promise<{ el: ElementNode | null; res?: GroundResult; answer?: AnswerInput; trial?: boolean }> {
     const model = this.model!;
     const subLabel = label(sub);
     if (this.forcedRef && this.forcedRef.sub === subLabel) {
@@ -742,7 +799,7 @@ export class Task extends Emitter<TaskEvents> {
       // Reversible steps verify and roll back whatever the confidence: a confident pick can still be the wrong list.
       return { el, res, trial };
     }
-    if (res.decision === 'none') return { el: null, res };
+    if (res.decision === 'none' || opts.quiet) return { el: null, res };
     const thc = th.ground.choice;
     const triedNote = tried.length ? ` Already tried and rolled back: ${tried.map((t) => t.desc).join('; ')}.` : '';
     const answer = await this.escalate('ground', `Unsure which element is ${intent.target}.${triedNote}`, {
@@ -834,7 +891,7 @@ export class Task extends Emitter<TaskEvents> {
       context: { element: `${el.ref} ${describeElement(el, { pageUrl: model.url })}`, reasons },
       answer_with: ['continue', 'skip', 'abort'],
     });
-    if (a.type === 'continue') { this.approved.add(key); return 'ok'; }
+    if (a.type === 'continue') { this.approved.add(key); this.riskApprovedAt = this.stepIdx; return 'ok'; }
     return 'skip';
   }
 
@@ -861,6 +918,7 @@ export class Task extends Emitter<TaskEvents> {
     const t1 = this.now();
     const assess = await this.assess(model);
     timings.assess = this.now() - t1;
+    if (assess.progress) this.journal.setProgress(assess.progress.level);
     const sub = await this.chooseSubintent(model, assess);
     this.lastSub = sub;
     const subLabel = label(sub);
@@ -886,6 +944,7 @@ export class Task extends Emitter<TaskEvents> {
       out = { outcome: 'failed', note: `${subLabel} failed: ${err.message}${err.detail ? ` (${err.detail})` : ''}` };
     }
     timings.execute = this.now() - t2;
+    if (out.outcome === 'ok' && !this.finished) out = await this.checkProgress(sub, model, assess, out);
     // Any click of ours that opened a dialog on the same page (a choice that shows a payment step) is noted.
     const act = (out.action as { type?: string } | undefined)?.type;
     if (out.outcome === 'ok' && (act === 'click' || act === 'choose') && sub.type !== 'dismiss_overlay' && !this.finished) {
@@ -919,7 +978,13 @@ export class Task extends Emitter<TaskEvents> {
       action: this.mask(out.action), outcome: out.outcome, url: model.url, pageSig: model.signature,
       diff: after && before ? this.mask(renderDiff(diffModels(model, after), after, 10)) : undefined,
       timings: { ...timings, total: this.now() - started }, screenshot,
-      notes: this.mask({ note: out.note, assess: { pageKind: assess.pageKind, goalReached: assess.goalReached, resultsMatch: assess.resultsMatch }, progress: this.status }),
+      notes: this.mask({
+        note: out.note, progress: this.status,
+        assess: {
+          pageKind: assess.pageKind, goalReached: assess.goalReached, resultsMatch: assess.resultsMatch,
+          wayProgress: assess.progress, situation: assess.situation ? { kind: assess.situation.kind, confidence: assess.situation.confidence } : undefined,
+        },
+      }),
     });
     this.emit('step', { idx: this.stepIdx, subintent: subLabel, outcome: out.outcome, note: this.mask(out.note), url: model.url });
     if (!this.finished) this.deps.trace.saveCheckpoint(this.id, this.mask(this.checkpointData()));
@@ -1071,7 +1136,9 @@ export class Task extends Emitter<TaskEvents> {
     }
     // Params the path never needed (sign-in details when already signed in) do not hold back a reached goal.
     // A step of the goal still open on top (the payment dialog) means it is not reached yet.
-    if (!this.spec.result && yes(a.goalReached) && !goalDialog && Object.entries(this.status).every(([k, s]) => s !== 'pending' || this.absentOn[k] !== undefined)) {
+    // Done when JEV says so, or when the page is at the last level of progress and the goal check does not object.
+    const doneByProgress = !!a.progress && a.progress.level === 4 && a.progress.p >= th.assess.choice.act && gateNoul(a.goalReached, th.assess.noul) !== 'no';
+    if (!this.spec.result && (yes(a.goalReached) || doneByProgress) && !goalDialog && Object.entries(this.status).every(([k, s]) => s !== 'pending' || this.absentOn[k] !== undefined)) {
       return { type: 'done', reason: 'goal reached' };
     }
     // A dialog of the goal is worked through whatever the page under it is (a list, a results page).
@@ -1128,6 +1195,9 @@ export class Task extends Emitter<TaskEvents> {
       // reached yet: go on.
       if (!this.spec.result && ((hasForm && anyDone) || goalDialog) && !yes(a.goalReached)) return { type: 'submit' };
     }
+    // What JEV recognises about the page (a closed menu, content further down, still loading) comes first.
+    const fast = this.fromSituation(model, a);
+    if (fast) return fast;
     // Nothing to fill here and no form to work through (a home page when already signed in, an account page with
     // only a search box of its own): open the part of the site where the goal is done, once per page state.
     const workForm = model.regions.some((r) => r.kind === 'form' && !this.searchBox(model, r));
@@ -1139,12 +1209,15 @@ export class Task extends Emitter<TaskEvents> {
   }
 
   private async decideFallback(model: Model, a: AssessOutput): Promise<Subintent> {
+    const fast = this.fromSituation(model, a);
+    if (fast) return fast;
     const options: SubintentOption[] = [];
     const pendingKeys = Object.keys(this.params).filter((k) => this.status[k] === 'pending' || this.status[k] === 'typed');
     for (const k of pendingKeys) options.push({ id: `fill_${k}`, description: `Enter \`params.${k}.value\` (${this.params[k].about ?? k}) into its field.` });
     options.push({ id: 'submit', description: 'Submit the form or start the search.' });
     if (this.spec.result) options.push({ id: 'extract', description: 'Read the results listed on the page.' });
     if (!this.entered.has(model.signature)) options.push({ id: 'enter', description: 'Open the part of the site where the goal is done (the account, a section, or a button that starts it).' });
+    if (!this.explored.has(model.signature) && this.openers(model).length) options.push({ id: 'explore', description: 'Open a menu, tab or collapsed section of this page that may hold what the goal needs.' });
     if (this.popupOptions(model).length || model.regions.some((r) => r.kind === 'popup')) options.push({ id: 'close_popup', description: 'Close the open popup or menu.' });
     options.push({ id: 'scroll', description: 'Scroll down to see more of the page.' });
     options.push({ id: 'go_back', description: 'Go back to the previous page.' });
@@ -1173,6 +1246,7 @@ export class Task extends Emitter<TaskEvents> {
       case 'submit': return { type: 'submit' };
       case 'extract': return { type: 'extract' };
       case 'enter': return { type: 'enter' };
+      case 'explore': return { type: 'explore' };
       case 'close_popup': return { type: 'close_popup' };
       case 'scroll': return { type: 'scroll' };
       case 'go_back': return { type: 'go_back' };
@@ -1218,6 +1292,7 @@ export class Task extends Emitter<TaskEvents> {
         return { outcome: 'ok', note: 'scrolled down', action: { type: 'scroll' } };
       }
       case 'enter': return this.enter(sub, model);
+      case 'explore': return this.explore(sub, model);
       case 'fill_any': return this.fillAny(sub, model);
       case 'reload': {
         this.reloaded.add(model.url);
@@ -1617,11 +1692,46 @@ export class Task extends Emitter<TaskEvents> {
     return { outcome: 'failed', note: `no selectable date for ${k} within 14 months` };
   }
 
+  /** Controls that open something on this page and were not opened yet: closed menus, collapsed sections, tabs. */
+  private openers(model: Model): ElementNode[] {
+    return [...model.elements.values()].filter((e) => e.visible && e.interactive && !e.states.disabled && !this.exploredVia.has(e.sig)
+      && (e.states.expanded === false || (!!e.attrs['aria-haspopup'] && e.states.expanded !== true) || (e.kind === 'tab' && !e.states.selected)));
+  }
+
+  /** A closed menu, tab or collapsed section may hold what the goal needs next: open the most promising one. */
+  private async explore(sub: Subintent, model: Model): Promise<Outcome> {
+    this.explored.add(model.signature);
+    const openers = this.openers(model);
+    const others = [...model.elements.values()].filter((e) => !openers.includes(e)).map((e) => e.sig);
+    const g = await this.ground(sub, {
+      target: 'the control that opens a menu, tab or collapsed section of this page where what `goal` needs next may be (a menu button, a tab, "Show more")',
+      kinds: ['button', 'clickable', 'tab', 'link', 'menuitem'], action: 'click', trial: true, exclude: others,
+    }, 'explore');
+    if (!g.el) return { outcome: 'skipped', note: 'no menu or section to open here' };
+    const before = this.model!;
+    if (!(g.el.kind === 'link' && g.el.href) && await this.guard(g.el, 'open a menu or section', false) === 'skip') {
+      return { outcome: 'skipped', note: 'opening not approved' };
+    }
+    await this.click(g.el);
+    await this.settle();
+    const after = await this.observe(false);
+    this.noteOpened(before, after);
+    if (g.trial && !hadEffect(before, after, g.el)) {
+      this.explored.delete(model.signature);
+      return this.trialFailed(sub, g.el, before, 'nothing opened');
+    }
+    this.settleGrounding(true);
+    this.exploredVia.add(g.el.sig);
+    return { outcome: 'ok', note: `opened ${g.el.ref} "${g.el.name}" to look for what the goal needs next`, action: { type: 'click', ref: g.el.ref } };
+  }
+
   /** The page has no way to the goal here: open the section where it is done ("Post an ad", "Sell", the account). */
   private async enter(sub: Subintent, model: Model): Promise<Outcome> {
     this.entered.add(model.signature);
     // No examples in the target: "Post an ad" among them drew JEV to posting when the goal was about an existing ad.
     const target = 'the button or link that leads toward doing `goal`: it starts it, or opens the section or account area where it is done; not a search';
+    // With closed menus or sections on the page, an unsure pick is not asked about: exploring them comes first.
+    const canExplore = !this.explored.has(model.signature) && this.openers(model).length > 0;
     // Ways in already taken lead here (an opener clicked again would only close its menu); links back to pages the
     // task came through lead away, and links to this very page (the current tab) lead nowhere.
     const here = pageAddress(model.url, model.url);
@@ -1630,8 +1740,10 @@ export class Task extends Emitter<TaskEvents> {
       && (this.enteredFrom.has(pageAddress(e.href, model.url)) || pageAddress(e.href, model.url) === here)).map((e) => e.sig);
     const g = await this.ground(sub, {
       target, kinds: ['link', 'button', 'clickable', 'menuitem', 'tab'], action: 'click', trial: true, exclude: [...this.enteredVia, ...back],
-    }, 'enter');
+    }, 'enter', { quiet: canExplore });
     if (!g.el) {
+      // No sure way in: what the goal needs may sit in a closed menu or collapsed section of this page.
+      if (canExplore) return this.explore({ type: 'explore' }, model);
       const ans = await this.escalate('subintent', 'This page has no way to the goal, and no way into the right part of the site was found.', {
         answer_with: ['hint', 'continue', 'abort'],
       });

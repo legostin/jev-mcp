@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Магазин — главная</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; color: #222; }
+  header { height: 56px; background: #f3f3f3; display: flex; gap: 20px; align-items: center; padding: 0 16px; }
+  aside { position: absolute; left: 0; top: 56px; width: 200px; padding: 16px; }
+  aside a, aside button { display: block; margin: 6px 0; }
+  #more { display: none; padding-left: 12px; }
+  #more.open { display: block; }
+  main { margin-left: 232px; padding: 16px; }
+  .cards { display: flex; flex-wrap: wrap; gap: 12px; }
+  .card { width: 180px; border: 1px solid #ddd; border-radius: 10px; padding: 10px; }
+</style>
+</head>
+<body>
+<header><a href="menus.html">Магазин</a><span>Иван П.</span><a href="#" onclick="return false">Корзина</a><a href="#" onclick="return false">Выйти</a></header>
+<aside>
+  <a href="#" onclick="return false">Мои заказы</a>
+  <a href="#" onclick="return false">Избранное</a>
+  <button type="button" id="moreBtn" aria-expanded="false" aria-controls="more">Ещё ▾</button>
+  <div id="more">
+    <a href="menus.html?page=archive">Архив заказов</a>
+    <a href="#" onclick="return false">Возвраты</a>
+  </div>
+</aside>
+<main id="main"></main>
+<script>
+const btn = document.getElementById('moreBtn');
+btn.onclick = () => { const m = document.getElementById('more'); m.classList.toggle('open'); btn.setAttribute('aria-expanded', String(m.classList.contains('open'))); };
+const main = document.getElementById('main');
+if (new URLSearchParams(location.search).get('page') === 'archive') {
+  document.title = 'Магазин — архив заказов';
+  main.innerHTML = '<h1>Архив заказов</h1><ul><li>Заказ №1042 — чайник, 12 400 ₸</li><li>Заказ №987 — лампа, 8 900 ₸</li></ul>';
+} else {
+  main.innerHTML = `<h1>Новинки</h1><div class="cards">${['Чайник', 'Лампа', 'Плед', 'Кружка', 'Подушка', 'Коврик'].map((t) => `<div class="card"><a href="#" onclick="return false">${t}</a></div>`).join('')}</div>`;
+}
+</script>
+</body>
+</html>
