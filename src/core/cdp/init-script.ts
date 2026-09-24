@@ -56,6 +56,7 @@ export const INIT_SCRIPT = String.raw`(() => {
     } catch (e) {}
     return origSetTimeout.call(this, fn, delay, ...rest);
   };
+  // A person clicking or typing takes over; scrolling to watch the task does not.
   const onInput = (e) => { if (e.isTrusted) J.lastUserInput = Date.now(); };
-  for (const t of ['pointerdown', 'keydown', 'wheel']) window.addEventListener(t, onInput, true);
+  for (const t of ['pointerdown', 'keydown']) window.addEventListener(t, onInput, true);
 })();`;
