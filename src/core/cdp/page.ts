@@ -496,8 +496,9 @@ export class PageSession extends Emitter<PageEvents> {
   }
 
   async back(): Promise<boolean> {
-    const { currentIndex, entries } = await this.send<{ currentIndex: number; entries: { id: number }[] }>('Page.getNavigationHistory');
-    if (currentIndex <= 0) return false;
+    const { currentIndex, entries } = await this.send<{ currentIndex: number; entries: { id: number; url: string }[] }>('Page.getNavigationHistory');
+    // The blank page a new tab starts on is not a page to go back to.
+    if (currentIndex <= 0 || entries[currentIndex - 1].url === 'about:blank') return false;
     await this.send('Page.navigateToHistoryEntry', { entryId: entries[currentIndex - 1].id });
     await sleep(300);
     return true;

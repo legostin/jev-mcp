@@ -178,6 +178,8 @@ export class Task extends Emitter<TaskEvents> {
   private noResultsOn: string | null = null;
   /** Page states where the way into the goal's section was already looked for. */
   private entered = new Set<string>();
+  /** Elements the task took to get where the goal is done (never clicked again for that). */
+  private enteredVia = new Set<string>();
   /** Choice groups already given "any" value. */
   private anyGroups = new Set<string>();
   private errorPages = 0;
@@ -595,7 +597,7 @@ export class Task extends Emitter<TaskEvents> {
     const th = this.th();
     const tried = this.rejected.get(subLabel) ?? [];
     const trial = !!intent.trial && th.trial.enabled && tried.length < th.trial.tries;
-    intent = { ...intent, trial, exclude: tried.map((t) => t.sig) };
+    intent = { ...intent, trial, exclude: [...(intent.exclude ?? []), ...tried.map((t) => t.sig)] };
     const card = this.card(sub);
     const host = hostOf(model.url);
     const pageKind = this.assessCache?.out.pageKind ?? 'other';
@@ -943,7 +945,8 @@ export class Task extends Emitter<TaskEvents> {
       return { type: 'extract' };
     }
     // Params the path never needed (sign-in details when already signed in) do not hold back a reached goal.
-    if (!this.spec.result && yes(a.goalReached) && Object.entries(this.status).every(([k, s]) => s !== 'pending' || this.absentOn[k] !== undefined)) {
+    // A step of the goal still open on top (the payment dialog) means it is not reached yet.
+    if (!this.spec.result && yes(a.goalReached) && !goalDialog && Object.entries(this.status).every(([k, s]) => s !== 'pending' || this.absentOn[k] !== undefined)) {
       return { type: 'done', reason: 'goal reached' };
     }
     const onForm = ['search_form', 'login', 'other', 'item_details', 'checkout'].includes(a.pageKind) || pendingKeys.length > 0;
@@ -989,11 +992,18 @@ export class Task extends Emitter<TaskEvents> {
         });
         if (ans.type === 'set_param' || ans.type === 'hint') return this.chooseSubintent(await this.observe(false), a);
       }
-      const anyDone = Object.values(this.status).some((s) => s === 'done');
+      // A value chosen for a required field no param covers (the saved card) is progress on the form too.
+      const anyDone = Object.values(this.status).some((s) => s === 'done') || this.anyGroups.size > 0;
       // Submit a fresh form, or go on to the next step of a multi-step form once this step changed something.
       if ((a.pageKind === 'search_form' || (hasForm && (this.submitsDone === 0 || this.dirty) && anyDone)) && (anyDone || Object.keys(this.params).length === 0)) return { type: 'submit' };
       // A step of a multi-step form with nothing left to fill here, and the goal not reached yet: go on.
       if (!this.spec.result && hasForm && anyDone && !yes(a.goalReached)) return { type: 'submit' };
+    }
+    // No form and nothing to fill here (a home page when already signed in): open the part of the site where the
+    // goal is done (the account, a section, "Post an ad"), once per page state.
+    if (!hasForm && gateNoul(a.goalReached, th.assess.noul) === 'no' && !this.entered.has(model.signature) && !(this.spec.result && a.pageKind === 'results_list')
+      && pendingKeys.every((k) => this.absentOn[k] === model.signature)) {
+      return { type: 'enter' };
     }
     return this.decideFallback(model, a);
   }
@@ -1004,6 +1014,7 @@ export class Task extends Emitter<TaskEvents> {
     for (const k of pendingKeys) options.push({ id: `fill_${k}`, description: `Enter \`params.${k}.value\` (${this.params[k].about ?? k}) into its field.` });
     options.push({ id: 'submit', description: 'Submit the form or start the search.' });
     if (this.spec.result) options.push({ id: 'extract', description: 'Read the results listed on the page.' });
+    if (!this.entered.has(model.signature)) options.push({ id: 'enter', description: 'Open the part of the site where the goal is done (the account, a section, or a button that starts it).' });
     if (this.popupOptions(model).length || model.regions.some((r) => r.kind === 'popup')) options.push({ id: 'close_popup', description: 'Close the open popup or menu.' });
     options.push({ id: 'scroll', description: 'Scroll down to see more of the page.' });
     options.push({ id: 'go_back', description: 'Go back to the previous page.' });
@@ -1031,6 +1042,7 @@ export class Task extends Emitter<TaskEvents> {
     switch (pick) {
       case 'submit': return { type: 'submit' };
       case 'extract': return { type: 'extract' };
+      case 'enter': return { type: 'enter' };
       case 'close_popup': return { type: 'close_popup' };
       case 'scroll': return { type: 'scroll' };
       case 'go_back': return { type: 'go_back' };
@@ -1475,15 +1487,16 @@ export class Task extends Emitter<TaskEvents> {
     return { outcome: 'failed', note: `no selectable date for ${k} within 14 months` };
   }
 
-  /** The page's form does not lead to the goal: open the section where it is done ("Post an ad", "Sell", "Create"). */
+  /** The page has no way to the goal here: open the section where it is done ("Post an ad", "Sell", the account). */
   private async enter(sub: Subintent, model: Model): Promise<Outcome> {
     this.entered.add(model.signature);
+    const target = 'the button or link that starts what the goal asks to do or opens the part of the site where it is done (for example "Post an ad", "Sell", "Create", the personal account or the right section), not a search';
+    // Ways in already taken lead here: an opener clicked again would only close its menu.
     const g = await this.ground(sub, {
-      target: 'the button or link that starts what the goal asks to do (for example "Post an ad", "Sell", "Create" or the right section of the site), not a search',
-      kinds: ['link', 'button', 'clickable', 'menuitem', 'tab'], action: 'click', trial: true,
+      target, kinds: ['link', 'button', 'clickable', 'menuitem', 'tab'], action: 'click', trial: true, exclude: [...this.enteredVia],
     }, 'enter');
     if (!g.el) {
-      const ans = await this.escalate('subintent', 'The form on this page does not lead to the goal, and no way into the right section was found.', {
+      const ans = await this.escalate('subintent', 'This page has no way to the goal, and no way into the right part of the site was found.', {
         answer_with: ['hint', 'continue', 'abort'],
       });
       return { outcome: 'retry', note: `no way into the goal's section (${ans.type})` };
@@ -1498,7 +1511,30 @@ export class Task extends Emitter<TaskEvents> {
     const after = await this.observe(false);
     if (g.trial && !hadEffect(before, after, g.el)) return this.trialFailed(sub, g.el, before, 'nothing opened');
     this.settleGrounding(true);
-    return { outcome: 'ok', note: `opened ${g.el.ref} "${g.el.name}" to get where the goal is done`, action: { type: 'click', ref: g.el.ref } };
+    this.enteredVia.add(g.el.sig);
+    const opened = `opened ${g.el.ref} "${g.el.name}"`;
+    // An opener ("Account ▾") shows a menu: the way in is one of its items.
+    const menu = diffModels(before, after).newRegions.map((id) => after.regions.find((r) => r.id === id))
+      .find((r) => r && (r.kind === 'popup' || (r.kind === 'nav' && after.elements.get(g.el!.ref)?.states.expanded === true)));
+    if (!menu) return { outcome: 'ok', note: `${opened} to get where the goal is done`, action: { type: 'click', ref: g.el.ref } };
+    const item = await this.ground(sub, {
+      target: 'the menu item that leads to the part of the site where the goal is done',
+      kinds: ['link', 'button', 'clickable', 'menuitem'], regionId: menu.id, action: 'click', trial: true,
+    }, 'enter:menu');
+    if (!item.el) {
+      await (await this.page()).press('Escape');
+      await this.settle();
+      return { outcome: 'ok', note: `${opened}; nothing in its menu leads to the goal, closed it` };
+    }
+    if (!(item.el.kind === 'link' && item.el.href) && await this.guard(item.el, 'open the section for the goal', false) === 'skip') {
+      return { outcome: 'skipped', note: 'entry not approved' };
+    }
+    await this.click(item.el);
+    await this.settle();
+    if (item.trial && !hadEffect(after, await this.observe(false), item.el)) return this.trialFailed(sub, item.el, before, 'the menu item did nothing');
+    this.enteredVia.add(item.el.sig);
+    this.settleGrounding(true);
+    return { outcome: 'ok', note: `${opened} and chose "${item.el.name}" to get where the goal is done`, action: { type: 'click', ref: item.el.ref } };
   }
 
   /**

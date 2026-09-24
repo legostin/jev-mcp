@@ -37,23 +37,34 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
+  async function dumpTrace(taskId: string) {
+    const trace = await client.call('task.trace', { task_id: taskId }).catch(() => null);
+    for (const s of trace?.steps ?? []) {
+      console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''} ${JSON.stringify(s.action ?? null)} ${s.url ?? ''}`);
+      for (const c of s.calls ?? []) {
+        if (/ground/.test(c.template)) console.log(`   ${c.template} ${JSON.stringify(c.answers?.pick ?? c.answers?.region ?? null).slice(0, 300)}`);
+        if (c.template === 'assess') console.log(`   assess ${JSON.stringify(Object.fromEntries(Object.entries(c.answers ?? {}).map(([k, v]: [string, any]) => [k, v.noul ?? v.choice])))}`);
+      }
+    }
+  }
+
   async function runToEnd(taskId: string, answer: (q: any) => any, maxQuestions = 4) {
     const questions: any[] = [];
     for (;;) {
       const r = await client.call('task.wait', { task_id: taskId, until: 'question', timeout_ms: 120_000 }, { timeoutMs: 130_000 });
       if (r.timeout) {
-        const trace = await client.call('task.trace', { task_id: taskId }).catch(() => null);
-        for (const s of trace?.steps ?? []) {
-          console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''} ${JSON.stringify(s.action ?? null)}`);
-          for (const c of s.calls ?? []) if (/ground/.test(c.template)) console.log(`   ${c.template} ${JSON.stringify(c.answers?.pick ?? c.answers?.region ?? null).slice(0, 300)}`);
-        }
+        await dumpTrace(taskId);
         throw new Error(`timeout; status ${JSON.stringify(r.status)}`);
       }
       if (r.event.type === 'done') return { result: r.event.payload, questions };
       const q = r.event.payload;
       questions.push(q);
       console.log('QUESTION', JSON.stringify({ kind: q.kind, summary: q.summary, candidates: q.decision?.candidates?.slice(0, 3) }));
-      if (questions.length > maxQuestions) { await client.call('task.control', { task_id: taskId, action: 'cancel' }); throw new Error('too many questions'); }
+      if (questions.length > maxQuestions) {
+        await client.call('task.control', { task_id: taskId, action: 'cancel' });
+        await dumpTrace(taskId);
+        throw new Error('too many questions');
+      }
       await client.call('task.answer', { question_id: q.question_id, answer: answer(q) });
     }
   }
@@ -111,6 +122,26 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     expect(result.result.selected.price.amount).toBe(38900);
     expect(questions).toHaveLength(0);
   }, 300_000);
+
+  it('opens the account from a page without a form and pays for an unpaid ad', async () => {
+    const created = await client.call('task.create', {
+      goal: 'Pay for the publication of my car ad (Toyota Camry, 2015) that is already posted but unpaid: find it among my unpaid ads in the account and pay with the saved bank card',
+      site: fixtures.url('account.html'),
+      // Already signed in: the sign-in params are never needed on this path.
+      params: { phone: { value: '7000000000', about: 'phone number used to sign in' }, password: { value: 'x', about: 'account password', secret: true } },
+      hints: ['The ad already exists and waits for payment: do not post a new ad.', 'Pay with the saved bank card that is already linked to the account.'],
+      policy: { fill_required: 'any', irreversible: 'ask' },
+    });
+    const { result, questions } = await runToEnd(created.task_id, (q) => (q.kind === 'risk_confirm' ? { type: 'continue' } : pickTop(q)), 6);
+    const trace = await client.call('task.trace', { task_id: created.task_id });
+    for (const s of trace.steps) console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''}`);
+    for (const q of questions) console.log(`question ${q.kind}: ${q.summary}`);
+    expect(result.status).toBe('done');
+    const notes = trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ');
+    expect(notes).toMatch(/Сохранённая карта/);
+    expect(notes).toMatch(/Оплатить 1 500/);
+    expect(questions.every((q: any) => q.kind === 'risk_confirm')).toBe(true);
+  }, 400_000);
 
   it('finds the way into an ad wizard from a search page, fills it with any values where allowed and pays', async () => {
     const created = await client.call('task.create', {

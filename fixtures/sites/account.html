@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Авторынок — объявления о продаже машин</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; color: #222; }
+  header { height: 56px; background: #f3f3f3; display: flex; gap: 20px; align-items: center; padding: 0 16px; position: relative; }
+  header .menu { position: absolute; top: 52px; right: 16px; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 8px 0; display: none; z-index: 10; }
+  header .menu a { display: block; padding: 8px 16px; color: #222; text-decoration: none; }
+  header .menu.open { display: block; }
+  main { padding: 16px; max-width: 960px; }
+  .cards { display: flex; flex-wrap: wrap; gap: 12px; }
+  .card { width: 200px; border: 1px solid #ddd; border-radius: 10px; padding: 10px; }
+  .tabs { display: flex; gap: 8px; margin: 12px 0; }
+  .tabs a { padding: 8px 14px; border: 1px solid #ccc; border-radius: 8px; color: #222; text-decoration: none; }
+  .tabs a.on { background: #e6f0ff; }
+  .ad { border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center; }
+  .primary { padding: 10px 20px; background: #1f7ae0; color: #fff; border: 0; border-radius: 10px; font-size: 15px; cursor: pointer; }
+  #done { font-size: 20px; color: #1a7f37; }
+</style>
+</head>
+<body>
+<header>
+  <a href="account.html">Авторынок</a>
+  <a href="#" onclick="return false">Избранное</a>
+  <a href="#" onclick="return false">Сообщения 2</a>
+  <span style="flex:1"></span>
+  <button type="button" id="cab" aria-haspopup="menu" aria-expanded="false">Кабинет ▾</button>
+  <a href="post.html">Подать объявление</a>
+  <nav class="menu" id="menu" role="menu">
+    <a role="menuitem" href="account.html?view=ads">Мои объявления</a>
+    <a role="menuitem" href="#" onclick="return false">Мои платежи</a>
+    <a role="menuitem" href="#" onclick="return false">Настройки</a>
+    <a role="menuitem" href="#" onclick="return false">Выйти</a>
+  </nav>
+</header>
+<main id="main"></main>
+<script>
+const q = new URLSearchParams(location.search);
+const main = document.getElementById('main');
+const cab = document.getElementById('cab');
+cab.onclick = () => {
+  const m = document.getElementById('menu');
+  m.classList.toggle('open');
+  cab.setAttribute('aria-expanded', String(m.classList.contains('open')));
+};
+if (q.get('view') === 'ads') {
+  const tab = q.get('tab') || 'active';
+  main.innerHTML = `<h1>Мои объявления</h1>
+    <div class="tabs">
+      <a href="account.html?view=ads&tab=active" class="${tab === 'active' ? 'on' : ''}">Активные (2)</a>
+      <a href="account.html?view=ads&tab=unpaid" class="${tab === 'unpaid' ? 'on' : ''}">Неоплаченные (1)</a>
+      <a href="account.html?view=ads&tab=archive" class="${tab === 'archive' ? 'on' : ''}">Архив</a>
+    </div>
+    <div id="list"></div><p id="done"></p>`;
+  const list = document.getElementById('list');
+  if (tab === 'unpaid') {
+    list.innerHTML = `<div class="ad"><div><b>Toyota Camry, 2015</b><br>5 000 000 ₸ · Алматы · ожидает оплаты</div>
+      <button type="button" class="primary" id="payad">Оплатить публикацию</button></div>`;
+    document.getElementById('payad').onclick = () => {
+      const back = document.createElement('div');
+      back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20';
+      back.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Оплата публикации" style="position:fixed;left:50%;top:30%;transform:translateX(-50%);background:#fff;padding:20px;border-radius:12px;width:380px">
+        <button type="button" id="payclose" aria-label="Закрыть" style="position:absolute;right:10px;top:8px;border:0;background:none;font-size:20px">×</button>
+        <h3>Оплата публикации — 1 500 ₸</h3>
+        <fieldset><legend>Способ оплаты</legend>
+          <label><input type="radio" name="pay" value="new"> Новая карта</label>
+          <label><input type="radio" name="pay" value="saved"> Сохранённая карта •••• 4242</label>
+        </fieldset>
+        <button type="button" class="primary" id="pay">Оплатить 1 500 ₸</button></div>`;
+      document.body.appendChild(back);
+      document.getElementById('payclose').onclick = () => back.remove();
+      document.getElementById('pay').onclick = () => {
+        const pay = back.querySelector('input[name=pay]:checked');
+        if (!pay) return;
+        back.remove();
+        list.innerHTML = '';
+        if (pay.value === 'saved') {
+          document.querySelector('a[href$="tab=unpaid"]').textContent = 'Неоплаченные (0)';
+          document.querySelector('a[href$="tab=active"]').textContent = 'Активные (3)';
+        }
+        document.getElementById('done').textContent = pay.value === 'saved'
+          ? 'Объявление Toyota Camry, 2015 оплачено сохранённой картой •••• 4242 и опубликовано'
+          : 'Введите данные новой карты';
+      };
+    };
+  } else if (tab === 'active') {
+    list.innerHTML = `<div class="ad"><div><b>Hyundai Accent, 2018</b><br>6 200 000 ₸ · Астана</div><a href="#" onclick="return false">Поднять в топ</a></div>
+      <div class="ad"><div><b>Kia Rio, 2020</b><br>7 900 000 ₸ · Астана</div><a href="#" onclick="return false">Поднять в топ</a></div>`;
+  }
+} else {
+  main.innerHTML = `<h1>Свежие объявления</h1><div class="cards">${[
+    ['Toyota Corolla, 2016', '6 900 000 ₸'], ['Kia K5, 2021', '12 500 000 ₸'], ['Hyundai Tucson, 2019', '11 800 000 ₸'],
+    ['Toyota RAV4, 2017', '10 400 000 ₸'], ['Kia Sportage, 2022', '13 900 000 ₸'], ['Hyundai Elantra, 2015', '5 600 000 ₸'],
+  ].map(([t, p]) => `<div class="card"><a href="#" onclick="return false">${t}</a><div>${p}</div></div>`).join('')}</div>`;
+}
+</script>
+</body>
+</html>

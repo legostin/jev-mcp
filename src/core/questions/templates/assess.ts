@@ -75,7 +75,12 @@ export function buildAssess(input: AssessInput): QuestionSet {
   const { model } = input;
   const questions: Record<string, Question> = {
     page_kind: { type: 'choice', instructions: 'What kind of page is `page`?', criteria: { ...PAGE_KINDS } },
-    goal_reached: { type: 'noul', instructions: 'Does `page` already show what `goal` asks for?' },
+    // "Shows what the goal asks for" read a page where the action could still be done (an unpaid ad with its Pay
+    // button) as done (0.8); asking for the outcome, with a confirmation required for actions, gives 0.1 there.
+    goal_reached: {
+      type: 'noul',
+      instructions: 'Is the outcome `goal` asks for already reached on `page`? For an action (post, pay, book, send), only a message confirming it was done counts: a page where it can still be done does not. For finding or opening something, the page must show it.',
+    },
     validation_error: { type: 'noul', instructions: 'Does `page` show an error or validation message about entered data?' },
   };
   if (input.checkFormFit) {

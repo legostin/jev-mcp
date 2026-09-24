@@ -306,4 +306,21 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(await page.evaluate('document.getElementById("done").textContent')).toMatch(/оплачено сохранённой картой/);
     expect(task.state).toBe('done');
   });
+  it('opens the goal\'s part of the site from a page without a form, through a menu, and never clicks the opener twice', async () => {
+    const page = await h.open('account.html');
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [[/starts what the goal asks/i, /Кабинет/], [/menu item that leads/i, /Мои объявления/]],
+      goalReached: (req) => (String((req.state as any).page?.url ?? '').includes('view=ads') ? 0.95 : 0.05),
+    });
+    const task = makeTask({ goal: 'Open the list of my ads in the account', params: { phone: { value: '7000000000', about: 'phone number used to sign in' } } }, page, jev);
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: 'abort' }), 10); });
+    await task.start();
+    expect(questions).toEqual([]);
+    expect(task.state).toBe('done');
+    expect(await page.evaluate('location.search')).toBe('?view=ads');
+    const notes = trace.getSteps(task.id).map((st) => (st.notes as { note?: string } | null)?.note ?? '').join(' | ');
+    expect(notes).toMatch(/opened e\d+ "Кабинет ▾" and chose "Мои объявления"/);
+  });
 });
