@@ -6,6 +6,8 @@ import { dbFile, tracesDir } from '../util/paths.ts';
 export interface TaskRecord {
   id: string; session: string; createdAt: number; updatedAt: number; state: string; goal: string;
   spec: unknown; result?: unknown; stats?: unknown;
+  /** Progress saved after every step, so a task can be resumed after the daemon restarts. */
+  checkpoint?: unknown;
 }
 export interface StepRecord {
   id: string; taskId: string; idx: number; startedAt: number; endedAt?: number; subintent?: string;
@@ -62,12 +64,25 @@ export class TraceStore {
       CREATE TABLE IF NOT EXISTS escalations (id TEXT PRIMARY KEY, task_id TEXT, created_at INTEGER, kind TEXT,
         payload TEXT, answer TEXT, answered_at INTEGER);
     `);
+    const cols = new Set((db.prepare('PRAGMA table_info(tasks)').all() as any[]).map((c) => c.name));
+    if (!cols.has('checkpoint')) db.exec('ALTER TABLE tasks ADD COLUMN checkpoint TEXT');
     return new TraceStore(db, blobDir);
   }
 
   recordTask(t: TaskRecord): void {
-    this.db.prepare(`INSERT OR REPLACE INTO tasks (id, session, created_at, updated_at, state, goal, spec, result, stats)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(t.id, t.session, t.createdAt, t.updatedAt, t.state, t.goal, j(t.spec), j(t.result), j(t.stats));
+    this.db.prepare(`INSERT OR REPLACE INTO tasks (id, session, created_at, updated_at, state, goal, spec, result, stats, checkpoint)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(t.id, t.session, t.createdAt, t.updatedAt, t.state, t.goal, j(t.spec), j(t.result), j(t.stats), j(t.checkpoint));
+  }
+
+  saveCheckpoint(id: string, checkpoint: unknown): void {
+    this.db.prepare('UPDATE tasks SET checkpoint = ?, updated_at = ? WHERE id = ?').run(j(checkpoint), Date.now(), id);
+  }
+
+  /** Tasks that were still going when the daemon stopped, most recent first. */
+  unfinishedTasks(sinceMs: number): TaskRecord[] {
+    const rows = this.db.prepare(`SELECT * FROM tasks WHERE state NOT IN ('done', 'failed', 'cancelled') AND updated_at >= ?
+      AND checkpoint IS NOT NULL ORDER BY updated_at DESC LIMIT 20`).all(Date.now() - sinceMs);
+    return (rows as any[]).map((r) => this.taskRow(r));
   }
 
   updateTask(id: string, patch: Partial<Pick<TaskRecord, 'state' | 'result' | 'stats' | 'spec'>>): void {
@@ -90,7 +105,7 @@ export class TraceStore {
 
   private taskRow(r: any): TaskRecord {
     return { id: r.id, session: r.session, createdAt: r.created_at, updatedAt: r.updated_at, state: r.state, goal: r.goal,
-      spec: parse(r.spec), result: parse(r.result), stats: parse(r.stats) };
+      spec: parse(r.spec), result: parse(r.result), stats: parse(r.stats), checkpoint: parse(r.checkpoint) };
   }
 
   recordStep(s: StepRecord): void {

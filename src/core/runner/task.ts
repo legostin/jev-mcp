@@ -34,7 +34,8 @@ import type { ConfidenceConfig, DecisionKind } from '../config/schema.ts';
 import type {
   AnswerInput, Escalation, EscalationKind, ParamStatus, StepSummary, TaskResult, TaskSpec, TaskState,
 } from './types.ts';
-import { FINAL_STATES } from './types.ts';
+import { FINAL_STATES, taskSpecSchema } from './types.ts';
+import type { TaskRecord } from '../trace/store.ts';
 import type { ParamSpec } from '../questions/state.ts';
 import type { MemoryStore } from '../memory/store.ts';
 
@@ -99,6 +100,17 @@ class Interrupted extends Error { constructor(reason: string) { super(reason); t
 const label = (s: Subintent): string => ('key' in s ? `${s.type}(${s.key})` : 'region' in s ? `${s.type}(${s.region})` : s.type);
 
 interface PendingQuestion { q: Escalation; resolve: (a: AnswerInput) => void; reject: (e: Error) => void }
+
+/** What a task needs to go on after the daemon restarts (saved after every step; secrets stay masked). */
+export interface TaskCheckpoint {
+  v: 1;
+  stepIdx: number; startedAt: number; cost: number; jevCalls: number; escalations: number;
+  status: Record<string, ParamStatus>;
+  hints: Hint[];
+  submitsDone: number; dirty: boolean; sortTried: boolean; sortedBy: string | null;
+  url: string | null; driver: string | null;
+  liveConfidence?: ConfidenceConfig;
+}
 
 type TaskEvents = {
   state: { state: TaskState; reason?: string };
@@ -328,8 +340,46 @@ export class Task extends Emitter<TaskEvents> {
     this.lastInputCheck = this.now();
   }
 
+  /** Where a task restored after a daemon restart left off. */
+  private resumeUrl: string | null = null;
+
+  /** Rebuilds a task from its trace record after a daemon restart; null when it cannot go on safely. */
+  static restore(rec: TaskRecord, deps: TaskDeps): Task | null {
+    const cp = rec.checkpoint as TaskCheckpoint | undefined;
+    const parsed = taskSpecSchema.safeParse(rec.spec);
+    if (!cp || cp.v !== 1 || !parsed.success) return null;
+    const spec = parsed.data;
+    // Secret values are never stored: a task that still needs one cannot continue on its own.
+    if (Object.entries(spec.params).some(([k, p]) => p.secret && cp.status[k] !== 'done')) return null;
+    const t = new Task(spec, deps, rec.id);
+    Object.assign(t.status, cp.status);
+    t.hints = cp.hints;
+    t.stepIdx = cp.stepIdx;
+    t.startedAt = cp.startedAt;
+    t.cost = cp.cost;
+    t.jevCalls = cp.jevCalls;
+    t.escalations = cp.escalations;
+    t.submitsDone = cp.submitsDone;
+    t.dirty = cp.dirty;
+    t.sortTried = cp.sortTried;
+    t.sortedBy = cp.sortedBy;
+    t.liveConfidence = cp.liveConfidence;
+    t.resumeUrl = cp.url;
+    t.state = 'interrupted';
+    t.stateReason = 'the daemon restarted; resume the task to continue';
+    return t;
+  }
+
+  private checkpointData(): TaskCheckpoint {
+    return {
+      v: 1, stepIdx: this.stepIdx, startedAt: this.startedAt, cost: this.cost, jevCalls: this.jevCalls, escalations: this.escalations,
+      status: { ...this.status }, hints: this.hints, submitsDone: this.submitsDone, dirty: this.dirty, sortTried: this.sortTried,
+      sortedBy: this.sortedBy, url: this.model?.url ?? this.resumeUrl, driver: this.spec.driver ?? null, liveConfidence: this.liveConfidence,
+    };
+  }
+
   private async recoverAfterInterrupt(): Promise<void> {
-    const url = this.model?.url;
+    const url = this.model?.url ?? this.resumeUrl;
     const page = await this.page();
     if (url && (await page.url()) !== url) await page.navigate(url);
   }
@@ -730,6 +780,7 @@ export class Task extends Emitter<TaskEvents> {
       notes: this.mask({ note: out.note, assess: { pageKind: assess.pageKind, goalReached: assess.goalReached, resultsMatch: assess.resultsMatch }, progress: this.status }),
     });
     this.emit('step', { idx: this.stepIdx, subintent: subLabel, outcome: out.outcome, note: this.mask(out.note), url: model.url });
+    if (!this.finished) this.deps.trace.saveCheckpoint(this.id, this.mask(this.checkpointData()));
   }
 
   private async assess(model: Model): Promise<AssessOutput> {

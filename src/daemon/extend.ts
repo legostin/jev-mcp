@@ -20,6 +20,7 @@ export async function registerStage2(handle: DaemonHandle, opts: { httpPort?: nu
   const memory = new MemoryStore(ctx.trace.db);
   const tasks = new TaskManager(ctx, rpc, memory);
   tasks.register();
+  tasks.restoreUnfinished();
   const bridge = new ExtensionBridge(() => ctx.getConfig().driver.extensionIds);
   ctx.browsers.setExtensionDriver(bridge.driver, () => bridge.everPaired);
   const http = new HttpServer({ ctx, tasks, memory, bridge });

@@ -44,6 +44,33 @@ function portFor(ctx: DaemonContext, initial: TabHandle, taskId: string): TabPor
   };
 }
 
+/**
+ * A port for a task restored after a daemon restart: the tab is found (same address) or opened only when the task
+ * resumes, so restoring never touches the browser.
+ */
+function lazyPortFor(ctx: DaemonContext, taskId: string, url: string | null, driver?: 'extension' | 'chromium'): TabPort {
+  let inner: TabPort | null = null;
+  const get = async (): Promise<TabPort> => {
+    if (inner) return inner;
+    const tabs = await ctx.browsers.listTabs();
+    const tab = (url ? tabs.find((t) => t.url === url && !t.lease) : undefined) ?? await ctx.browsers.openTab(url ?? undefined, driver);
+    inner = portFor(ctx, tab, taskId);
+    return inner;
+  };
+  return {
+    get tabId() { return inner?.tabId ?? '(resumes in a tab at its last address)'; },
+    page: async () => (await get()).page(),
+    observe: async (o) => (await get()).observe(o),
+    lastModel: () => inner?.lastModel(),
+    release: () => inner?.release(),
+    reset: async () => { await (await get()).reset?.(); },
+    popupsSince: (since) => inner?.popupsSince?.(since) ?? [],
+    peek: (id) => ctx.browsers.observe(id),
+    switchTo: (id) => inner?.switchTo?.(id),
+    interactive: () => inner?.interactive?.() ?? true,
+  };
+}
+
 /** One-line summary of a pending question, with its top candidates, for piggyback and channel delivery. */
 export function questionLine(q: Escalation): string {
   const cands = q.decision?.candidates?.slice(0, 3).map((c) => `${c.ref} p=${c.p.toFixed(2)} ${c.desc}`).join('; ');
@@ -111,13 +138,40 @@ export class TaskManager {
       sessionId, getConfig: this.ctx.getConfig, jev: this.ctx.jev, trace: this.ctx.trace,
       port: portFor(this.ctx, tab, id), memory: this.memory,
     }, id);
+    this.adopt(task);
+    void task.start().catch((e) => log.error(`task ${task.id} crashed`, e));
+    return task;
+  }
+
+  private adopt(task: Task): void {
     this.tasks.set(task.id, task);
     task.on('escalation', (q) => this.publish(task, 'question', q));
     task.on('done', (r) => this.publish(task, 'done', r));
     task.on('state', (s) => this.publish(task, 'state', s));
     task.on('step', (s) => this.publish(task, 'step', s));
-    void task.start().catch((e) => log.error(`task ${task.id} crashed`, e));
-    return task;
+  }
+
+  /** Brings back tasks that were still going when the daemon stopped, as "interrupted" (resume continues them). */
+  restoreUnfinished(maxAgeMs = 2 * 3600_000): number {
+    let n = 0;
+    for (const rec of this.ctx.trace.unfinishedTasks(maxAgeMs)) {
+      if (this.tasks.has(rec.id)) continue;
+      const cp = rec.checkpoint as { url?: string | null; driver?: string | null } | undefined;
+      const driver = cp?.driver === 'extension' || cp?.driver === 'chromium' ? cp.driver : undefined;
+      const task = Task.restore(rec, {
+        sessionId: rec.session, getConfig: this.ctx.getConfig, jev: this.ctx.jev, trace: this.ctx.trace,
+        port: lazyPortFor(this.ctx, rec.id, cp?.url ?? null, driver), memory: this.memory,
+      });
+      if (!task) {
+        this.ctx.trace.updateTask(rec.id, { state: 'failed', result: { status: 'failed', error: 'the daemon restarted and the task cannot continue on its own (a secret param was still needed)' } });
+        continue;
+      }
+      this.adopt(task);
+      this.ctx.trace.updateTask(rec.id, { state: 'interrupted' });
+      n++;
+    }
+    if (n) log.info(`restored ${n} interrupted task(s); resume them to continue`);
+    return n;
   }
 
   get(id: string): Task {
@@ -169,7 +223,8 @@ export class TaskManager {
     rpc.register('task.status', async (p: { task_id?: string }, conn) => {
       if (p.task_id) return this.get(p.task_id).statusView();
       const sid = session(conn);
-      return { tasks: [...this.tasks.values()].filter((t) => t.sessionId === sid).map((t) => t.statusView()) };
+      // Interrupted tasks belong to a session of a previous daemon run: list them to every session so they can be resumed.
+      return { tasks: [...this.tasks.values()].filter((t) => t.sessionId === sid || t.state === 'interrupted').map((t) => t.statusView()) };
     });
 
     rpc.register('task.wait', async (p: { task_id?: string; until?: Waiter['until']; timeout_ms?: number }, conn) => {
