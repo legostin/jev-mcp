@@ -44,8 +44,8 @@ function segments(model: PageModel, refs: string[]): { segs: Segment[]; url: str
     const e = model.elements.get(r);
     if (!e || !e.visible) continue;
     const text = cleanText(e.text || e.name, 200);
-    // Enumeration marks ("1.", "12.") are list furniture.
-    const seg: Segment | null = text.length < 2 || /^\d{1,4}\.$/.test(text) ? null : { text, link: e.kind === 'link' };
+    // Enumeration marks ("1.", "12.") are list furniture; image texts are photo captions or repeat the title.
+    const seg: Segment | null = text.length < 2 || /^\d{1,4}\.$/.test(text) || e.kind === 'image' ? null : { text, link: e.kind === 'link' };
     if (seg) segs.push(seg);
     if (e.kind === 'link' && e.href) {
       const n = letterWords(text);

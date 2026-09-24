@@ -43,7 +43,8 @@ const cards = [
   ['AI', 'Startup raises $77M for enterprise agents', 'Jane Roe', '8 hours ago'],
 ];
 document.getElementById('cards').innerHTML = cards.map(([cat, title, author, when], i) => `
-  <article><a class="cat" href="/category/${cat.toLowerCase()}/">${cat}</a>
+  <article><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="60" height="40" alt="A photo of the product on a desk">
+    <a class="cat" href="/category/${cat.toLowerCase()}/">${cat}</a>
     <h3><a href="/2026/09/24/story-${i}/">${title}</a></h3>
     <a href="/author/${author.replace(' ', '-').toLowerCase()}/">${author}</a> <time>${when}</time></article>`).join('');
 </script>

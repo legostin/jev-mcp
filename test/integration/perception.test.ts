@@ -50,6 +50,7 @@ describe('perception', () => {
     const items = listItems(m, cards);
     expect(items).toHaveLength(4);
     expect(items.map((c) => new URL(c.url!).pathname)).toEqual([0, 1, 2, 3].map((i) => `/2026/09/24/story-${i}/`));
+    expect(items.every((c) => !/photo of the product/.test(c.text))).toBe(true);
   });
 
   it('never shows card numbers or security codes as typed', async () => {
