@@ -1496,6 +1496,17 @@ export class Task extends Emitter<TaskEvents> {
       if (this.anyGroups.has(group) || radios.some((r) => r.states.checked || paramRefs.has(r.ref))) continue;
       return { ref: radios[0].ref, group };
     }
+    // Option buttons under a heading ("Двигатель: [Бензиновый] [Гибридный]"), none chosen: a choice group too.
+    for (const r of model.regions) {
+      if (r.kind !== 'section' || !r.label || !formIds.has(r.id)) continue;
+      const group = `chips:${r.sig}`;
+      if (this.anyGroups.has(group)) continue;
+      const own = r.refs.map((ref) => model.elements.get(ref)).filter((e): e is ElementNode => !!e && e.visible);
+      const chips = own.filter((e) => (e.kind === 'button' || e.kind === 'clickable') && !e.states.disabled && (e.name || '').length > 0 && (e.name || '').length <= 30);
+      if (chips.length < 2 || chips.length > 20 || chips.length !== own.filter((e) => e.interactive).length) continue;
+      if (chips.some((c) => c.states.selected || c.states.checked || paramRefs.has(c.ref))) continue;
+      return { ref: chips[0].ref, group };
+    }
     return null;
   }
 
@@ -1508,6 +1519,10 @@ export class Task extends Emitter<TaskEvents> {
     const options: { key: string; label: string; el?: ElementNode; value?: string }[] = [];
     if (el.kind === 'select') {
       (el.options ?? []).forEach((o, i) => { if (o.value && !/^(выберите|select|choose|—|-)/i.test(o.label.trim())) options.push({ key: `o${i}`, label: o.label, value: o.value }); });
+    } else if (sub.group.startsWith('chips:')) {
+      const region = model.regions.find((r) => r.sig === sub.group.slice(6));
+      (region?.refs ?? []).map((ref) => model.elements.get(ref)).filter((e): e is ElementNode => !!e && e.visible && e.interactive)
+        .forEach((e, i) => options.push({ key: `o${i}`, label: e.name || e.text || '', el: e }));
     } else if (el.kind === 'radio') {
       const radios = [...model.elements.values()].filter((r) => r.kind === 'radio' && r.visible && !r.states.disabled
         && (el.attrs.name ? r.attrs.name === el.attrs.name : r.regionId === el.regionId));
