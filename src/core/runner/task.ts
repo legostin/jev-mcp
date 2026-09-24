@@ -931,7 +931,10 @@ export class Task extends Emitter<TaskEvents> {
       if (!this.sortTried && /^(min|max)\(/.test(this.spec.result.select ?? '')) return { type: 'apply_sort' };
       return { type: 'extract' };
     }
-    if (!this.spec.result && yes(a.goalReached) && Object.values(this.status).every((s) => s !== 'pending')) return { type: 'done', reason: 'goal reached' };
+    // Params the path never needed (sign-in details when already signed in) do not hold back a reached goal.
+    if (!this.spec.result && yes(a.goalReached) && Object.entries(this.status).every(([k, s]) => s !== 'pending' || this.absentOn[k] !== undefined)) {
+      return { type: 'done', reason: 'goal reached' };
+    }
     const onForm = ['search_form', 'login', 'other', 'item_details', 'checkout'].includes(a.pageKind) || pendingKeys.length > 0;
     if (onForm) {
       for (const k of Object.keys(this.params)) {
