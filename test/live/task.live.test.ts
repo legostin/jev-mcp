@@ -41,7 +41,14 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     const questions: any[] = [];
     for (;;) {
       const r = await client.call('task.wait', { task_id: taskId, until: 'question', timeout_ms: 120_000 }, { timeoutMs: 130_000 });
-      if (r.timeout) throw new Error(`timeout; status ${JSON.stringify(r.status)}`);
+      if (r.timeout) {
+        const trace = await client.call('task.trace', { task_id: taskId }).catch(() => null);
+        for (const s of trace?.steps ?? []) {
+          console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''} ${JSON.stringify(s.action ?? null)}`);
+          for (const c of s.calls ?? []) if (/ground/.test(c.template)) console.log(`   ${c.template} ${JSON.stringify(c.answers?.pick ?? c.answers?.region ?? null).slice(0, 300)}`);
+        }
+        throw new Error(`timeout; status ${JSON.stringify(r.status)}`);
+      }
       if (r.event.type === 'done') return { result: r.event.payload, questions };
       const q = r.event.payload;
       questions.push(q);
@@ -125,10 +132,12 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     const { result, questions } = await runToEnd(created.task_id, (q) => (q.kind === 'risk_confirm' ? { type: 'continue' } : pickTop(q)), 6);
     const trace = await client.call('task.trace', { task_id: created.task_id });
     for (const s of trace.steps) console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''}`);
-    const page = await client.call('page.observe', { tab: trace.task?.tab ?? undefined, view: 'overview' }).catch(() => null);
-    void page;
+    for (const q of questions) console.log(`question ${q.kind}: ${q.summary}`);
     expect(result.status).toBe('done');
-    expect(trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ')).toMatch(/опубликовано и оплачено|goal/);
+    expect(trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ')).toMatch(/goal reached/);
+    // The payment dialog is part of the goal: never dismissed, the saved card is chosen, "Pay" is confirmed.
+    expect(trace.steps.some((s: any) => /dismiss_overlay/.test(s.subintent))).toBe(false);
+    expect(trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ')).toMatch(/Сохранённая карта/);
     expect(questions.every((q: any) => q.kind === 'risk_confirm')).toBe(true);
   }, 400_000);
 

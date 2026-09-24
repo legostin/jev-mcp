@@ -23,6 +23,7 @@ export const OVERLAY_KINDS = {
   promo: 'A promotion, newsletter, discount or subscription offer.',
   region_picker: 'A choice of region, city, language or currency.',
   login_wall: 'A prompt to sign in or register.',
+  goal_step: 'A step of what `goal` itself asks for (a payment, a choice of plan or card, a form or a confirmation it needs), not an obstacle.',
   app_banner: 'An invitation to install a mobile app.',
   other: 'Something else.',
 } as const;

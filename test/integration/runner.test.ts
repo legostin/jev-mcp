@@ -9,6 +9,8 @@ import { taskSpecSchema } from '../../src/core/runner/types.ts';
 import { TraceStore } from '../../src/core/trace/store.ts';
 import { parseConfig } from '../../src/core/config/store.ts';
 import { createScriptedClient } from '../../src/core/jev/fake.ts';
+import { MemoryStore } from '../../src/core/memory/store.ts';
+import { DatabaseSync } from '../../src/core/trace/sqlite.ts';
 import type { PageSession } from '../../src/core/cdp/page.ts';
 import type { Answer, EvaluateRequest, JevClient } from '../../src/core/jev/types.ts';
 
@@ -39,6 +41,10 @@ interface Script {
   actionClass?: string;
   /** Fixed answers for noul questions by id (e.g. `same`). */
   nouls?: Record<string, number>;
+  /** [question id pattern, choice]: fixed answers for other choice questions (e.g. overlay kinds). */
+  choices?: Array<[RegExp, string]>;
+  /** Option pattern for "which option fits the goal" picks. */
+  option?: RegExp;
 }
 
 /** Scripted JEV: answers by question id with deterministic rules; records every request. */
@@ -50,6 +56,9 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
       if (id === 'page_kind') {
         const kind = s.pageKind(req);
         out[id] = { type: 'choice', choice: kind, probabilities: { [kind]: 0.97, other: 0.03 }, confidence: 0.95 };
+      } else if (id === 'pick' && q.type === 'choice' && s.option && state.options) {
+        const k = Object.keys(q.criteria).find((x) => s.option!.test(String(state.options[x] ?? ''))) ?? 'none';
+        out[id] = { type: 'choice', choice: k, probabilities: { [k]: 0.95 }, confidence: 0.95 };
       } else if (id === 'pick' && q.type === 'choice') {
         const target = String(state.intent?.target ?? JSON.stringify(state.params ?? {}));
         const pool = { ...(state.page?.elements ?? {}), ...(state.candidates ?? {}), ...(state.options ?? {}) } as Record<string, string>;
@@ -88,7 +97,7 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
         const c = s.actionClass ?? 'search_submit';
         out[id] = { type: 'choice', choice: c, probabilities: { [c]: 1 }, confidence: 1 };
       } else if (q.type === 'choice') {
-        const k = Object.keys(q.criteria)[0];
+        const k = s.choices?.find(([re]) => re.test(id))?.[1] ?? Object.keys(q.criteria)[0];
         out[id] = { type: 'choice', choice: k, probabilities: { [k]: 1 }, confidence: 1 };
       } else if (q.type === 'noul') {
         let v = 0.05;
@@ -102,9 +111,9 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
   });
 }
 
-function makeTask(spec: unknown, page: PageSession, jev: JevClient) {
+function makeTask(spec: unknown, page: PageSession, jev: JevClient, memory?: MemoryStore) {
   return new Task(taskSpecSchema.parse(spec), {
-    sessionId: 's1', getConfig: () => parseConfig({ trace: { screenshots: false } }), jev, trace, port: port(page),
+    sessionId: 's1', getConfig: () => parseConfig({ trace: { screenshots: false } }), jev, trace, port: port(page), memory,
   });
 }
 
@@ -276,5 +285,25 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(questions[0].summary).toMatch(/Оплатить/);
     expect(task.state).toBe('cancelled');
     expect(await page.evaluate('document.getElementById("done").textContent')).toBe('');
+  });
+  it('works through a payment dialog that is part of the goal instead of closing it', async () => {
+    const page = await h.open('post.html');
+    await page.evaluate("s.brand='Toyota'; s.model='Camry'; s.year='2015'; s.body='Седан'; go(5)");
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [[/submits the form/i, /Опубликовать|Оплатить/]],
+      choices: [[/^overlay_kind_/, 'goal_step']],
+      option: /Сохранённая/,
+      goalReached: (req) => (JSON.stringify(req.state).includes('оплачено') ? 0.95 : 0.05),
+    });
+    // Site memory keeps the "Опубликовать" button as this site's submit: under the dialog it must not be reused.
+    const task = makeTask({ goal: 'Publish the ad and pay for it with the saved bank card', policy: { fill_required: 'any' } }, page, jev, new MemoryStore(new DatabaseSync(':memory:')));
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: 'continue' }), 10); });
+    await task.start();
+    expect(questions.map((q) => q.kind)).toEqual(['risk_confirm', 'risk_confirm']);
+    expect(questions[1].summary).toMatch(/Оплатить/);
+    expect(await page.evaluate('document.getElementById("done").textContent')).toMatch(/оплачено сохранённой картой/);
+    expect(task.state).toBe('done');
   });
 });

@@ -114,19 +114,31 @@ function render() {
   } else if (s.step === 5) {
     form.insertAdjacentHTML('beforeend', `
       <p>${s.brand} ${s.model}, ${s.year} г., ${s.body}</p>
-      <fieldset><legend>Способ оплаты</legend>
-        <label><input type="radio" name="pay" value="new"> Новая карта</label>
-        <label><input type="radio" name="pay" value="saved"> Сохранённая карта •••• 4242</label>
-      </fieldset>
-      <p id="payerr" style="color:#c00"></p>
-      <button type="submit" class="primary" id="publish">Опубликовать и оплатить 1 500 ₸</button>`);
+      <button type="submit" class="primary" id="publish">Опубликовать</button>`);
     document.getElementById('publish').onclick = () => {
-      const pay = form.querySelector('input[name=pay]:checked');
-      if (!pay) { document.getElementById('payerr').textContent = 'Выберите способ оплаты'; return; }
-      form.innerHTML = '';
-      document.getElementById('done').textContent = pay.value === 'saved'
-        ? 'Объявление опубликовано и оплачено сохранённой картой •••• 4242'
-        : 'Введите данные новой карты';
+      // Publishing needs a payment: a modal dialog, part of the flow rather than an obstacle.
+      const back = document.createElement('div');
+      back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20';
+      back.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Оплата публикации" style="position:fixed;left:50%;top:30%;transform:translateX(-50%);background:#fff;padding:20px;border-radius:12px;width:380px">
+        <button type="button" id="payclose" aria-label="Закрыть" style="position:absolute;right:10px;top:8px;border:0;background:none;font-size:20px">×</button>
+        <h3>Оплата публикации — 1 500 ₸</h3>
+        <fieldset><legend>Способ оплаты</legend>
+          <label><input type="radio" name="pay" value="new"> Новая карта</label>
+          <label><input type="radio" name="pay" value="saved"> Сохранённая карта •••• 4242</label>
+        </fieldset>
+        <p id="payerr" style="color:#c00"></p>
+        <button type="button" class="primary" id="pay">Оплатить 1 500 ₸</button></div>`;
+      document.body.appendChild(back);
+      document.getElementById('payclose').onclick = () => { back.remove(); document.getElementById('done').textContent = 'Объявление сохранено как неоплаченное'; };
+      document.getElementById('pay').onclick = () => {
+        const pay = back.querySelector('input[name=pay]:checked');
+        if (!pay) { document.getElementById('payerr').textContent = 'Выберите способ оплаты'; return; }
+        back.remove();
+        form.innerHTML = '';
+        document.getElementById('done').textContent = pay.value === 'saved'
+          ? 'Объявление опубликовано и оплачено сохранённой картой •••• 4242'
+          : 'Введите данные новой карты';
+      };
     };
   }
 }

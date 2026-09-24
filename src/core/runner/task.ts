@@ -8,7 +8,7 @@ import type { ModelState } from '../perception/model.ts';
 import { diffModels } from '../perception/diff.ts';
 import { describeElement, renderCandidate, renderDiff, renderOverview } from '../perception/render.ts';
 import { parseCalendarCells } from '../perception/calendar.ts';
-import { groundByIntent, type GroundResult, type Intent } from '../questions/templates/ground.ts';
+import { candidateElements, groundByIntent, regionAndDescendants, type GroundResult, type Intent } from '../questions/templates/ground.ts';
 import { buildAssess, readAssess, type AssessOutput } from '../questions/templates/assess.ts';
 import { buildDecide, readDecide, type SubintentOption } from '../questions/templates/decide.ts';
 import { buildSuggestionPick, buildOptionPick, buildGoalPrefs } from '../questions/templates/widget.ts';
@@ -602,9 +602,12 @@ export class Task extends Emitter<TaskEvents> {
     if (memoryKey && this.deps.memory && this.deps.getConfig().memory.enabled) {
       let hit = null;
       let el: ElementNode | undefined;
+      // The remembered element must still be a valid candidate here: in the step's region (a dialog on top) and
+      // not covered by it.
+      const pool = candidateElements(model, intent).filter((e) => !e.occluded);
       for (const key of this.memKeys(sub, memoryKey)) {
         hit = this.deps.memory.lookup(host, pageKind, key);
-        el = hit ? [...model.elements.values()].find((e) => e.sig === hit!.sig && e.visible && !intent.exclude!.includes(e.sig)) : undefined;
+        el = hit ? pool.find((e) => e.sig === hit!.sig) : undefined;
         if (hit && el) break;
       }
       if (hit && el) {
@@ -898,6 +901,8 @@ export class Task extends Emitter<TaskEvents> {
     const blocking = model.regions.filter((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking);
     for (const r of blocking) {
       const kind = a.overlays[r.id]?.kind ?? 'other';
+      // A dialog that is part of the goal (pay, choose a plan or card, confirm) is worked through, not closed.
+      if (kind === 'goal_step') continue;
       if (kind === 'captcha') {
         return { type: 'blocker', kind: 'captcha', summary: 'The site shows a CAPTCHA / bot check. Solve it in the browser (or ask the user to), then answer "continue".' };
       }
@@ -926,7 +931,8 @@ export class Task extends Emitter<TaskEvents> {
     // A param counts as pending while it can still be filled here, or revealed behind "more filters".
     const pendingKeys = Object.keys(this.params).filter((k) => (this.status[k] === 'pending' || this.status[k] === 'typed')
       && (this.absentOn[k] !== model.signature || !this.revealTried.has(k)));
-    const hasForm = model.regions.some((r) => r.kind === 'form');
+    const goalDialog = model.regions.some((r) => (r.kind === 'dialog' || r.kind === 'overlay') && r.blocking && a.overlays[r.id]?.kind === 'goal_step');
+    const hasForm = model.regions.some((r) => r.kind === 'form') || goalDialog;
     // After a search, filters that moved the page to a new address were applied by the site: no second submit.
     if (this.dirty && this.submitsDone > 0 && this.lastSubmitUrl && model.url !== this.lastSubmitUrl) this.dirty = false;
     if (this.spec.result && this.dirty && hasForm && !pendingKeys.length) return { type: 'submit' };
@@ -1500,7 +1506,7 @@ export class Task extends Emitter<TaskEvents> {
    * Groups are keyed by name (or region and label) so each is filled once.
    */
   private emptyChoice(model: Model): { ref: string; group: string } | null {
-    const formIds = new Set(model.regions.filter((r) => r.kind === 'form').flatMap((r) => {
+    const formIds = new Set(model.regions.filter((r) => r.kind === 'form' || ((r.kind === 'dialog' || r.kind === 'overlay') && r.blocking)).flatMap((r) => {
       const ids = [r.id];
       for (let grew = true; grew;) { grew = false; for (const x of model.regions) if (x.parentId && ids.includes(x.parentId) && !ids.includes(x.id)) { ids.push(x.id); grew = true; } }
       return ids;
@@ -1750,9 +1756,25 @@ export class Task extends Emitter<TaskEvents> {
     for (let r = model.regions.find((x) => x.id === fieldRegion); r; r = model.regions.find((x) => x.id === r!.parentId)) {
       if (r.kind === 'form') { formRegion = r.id; break; }
     }
+    // No param field on this step (a wizard's last page): the page's only form with controls is where to go on.
+    if (!formRegion) {
+      const forms = model.regions.filter((r) => r.kind === 'form' && r.refs.some((ref) => { const e = model.elements.get(ref); return !!e?.interactive && !e.occluded; }));
+      if (forms.length === 1) formRegion = forms[0].id;
+    }
+    // A modal on top (a payment or plan step of the goal) holds the button that goes on. Non-blocking widgets
+    // (chat, app banners) never do.
+    // A backdrop often holds no controls itself: they sit in the dialog nested in it.
+    const usable = (r: Region) => {
+      const ids = regionAndDescendants(model, r.id);
+      return [...model.elements.values()].some((e) => ids.has(e.regionId) && e.visible && e.inViewport && e.interactive && !e.occluded && !e.states.disabled);
+    };
+    const dialog = model.regions.find((r) => (r.kind === 'dialog' || r.kind === 'overlay')
+      && (r.blocking || a.overlays[r.id]?.kind === 'goal_step') && usable(r));
+    // Skipping is asked separately: as one more example in the main target it made JEV unsure about both.
     const g = await this.ground(sub, {
-      target: 'the button that submits the form or goes on to its next step (such as Search, Show results, Next, Continue, or Skip when the step is optional)', kinds: ['button', 'clickable', 'link'],
-      regionId: formRegion, action: 'click',
+      target: 'the button that submits the form or goes on to its next step (such as Search, Show results, Next, Continue, Submit, Publish, Post or Pay)',
+      fallback: 'the button that skips this step and goes on without it (such as Skip, Later or Not now)',
+      kinds: ['button', 'clickable', 'link'], regionId: dialog?.id ?? formRegion, action: 'click',
     }, 'submit');
     if (!g.el) {
       if (g.res?.decision === 'none') {
@@ -1771,7 +1793,6 @@ export class Task extends Emitter<TaskEvents> {
     await this.settle();
     const switched = await this.followPopups(clickedAt, 'the search results');
     if (switched) {
-      this.lastSubmitUrl = this.model?.url ?? null;
       this.lastSubmitUrl = this.model?.url ?? null;
       this.settleGrounding(true);
       return { outcome: 'ok', note: `clicked submit ${g.el.ref} "${g.el.name}"; ${switched}`, action: { type: 'click', ref: g.el.ref } };

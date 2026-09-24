@@ -67,7 +67,7 @@ const ELEMENT_MAX = 200;
 
 const INTERACTIVE_KINDS: ElementKind[] = ['link', 'button', 'textbox', 'combobox', 'select', 'checkbox', 'radio', 'slider', 'option', 'tab', 'menuitem', 'clickable', 'file'];
 
-function regionAndDescendants(model: PageModel, id: string): Set<string> {
+export function regionAndDescendants(model: PageModel, id: string): Set<string> {
   const ids = new Set([id]);
   let grew = true;
   while (grew) {

@@ -79,7 +79,7 @@ step 7 results           the sorted list goes to the agent (or, with extract "co
   - occlusion detection (`[covered]`, `[BLOCKING]`);
   - shadow DOM and cross-origin iframes.
 - **Autonomous task loop:**
-  - dismisses consent and promo overlays;
+  - dismisses consent and promo overlays, and works through dialogs that are a step of the goal (payment, plan choice);
   - fills fields from your params and picks autocomplete suggestions;
   - handles date pickers, including low-fare calendars;
   - submits, paginates and extracts results to your schema with `min/max/first/all`.
@@ -225,7 +225,7 @@ Each task step:
 3a. **Find the way in.** If the page's form does not lead to the goal (a site search when the goal is to post an ad), the task first opens the section where the goal is done ("Post an ad", "Sell", "Create"), with the usual effect check and rollback.
 4. **Ground.** JEV gets a card for the current step with its value ("set the car model to "Camry"") instead of every param, and only the hints that belong to this step. One call asks for the control that shows the value and, as a fallback, for the field or list opener where the param is chosen. Selection is hierarchical (region, then element) with an "exists?" check. A mid-range answer gets a second look at the top candidates, shown with the row they sit in ("Модель | [Camry] | RAV4"); both looks are averaged, not overwritten. A leader whose label is exactly the value acts without a second look. Site memory offers a fast path.
 5. **Safety gate.** Code rules and JEV classify the action; irreversible steps ask first.
-5a. **Multi-step forms.** Wizard steps without anything to fill go on ("Next", or "Skip" for optional steps); inactive step tabs are recognised; with `policy.fill_required: "any"`, required choices you gave no param for get the option that fits the goal and hints best (the saved card), else the first.
+5a. **Multi-step forms.** Wizard steps without anything to fill go on ("Next", or "Skip" for optional steps); inactive step tabs are recognised; with `policy.fill_required: "any"`, required choices you gave no param for get the option that fits the goal and hints best (the saved card), else the first. A dialog that is part of the goal (a payment, a plan or card choice, a confirmation) is worked through, not closed: its choices are filled and its own button goes on.
 6. **Act and verify.** Trusted CDP input, deterministic checks and a JEV verification. Reversible steps (fields, chips, dropdowns, date pickers, "more filters", sorting, overlays) check their effect; when it is missing, the step is rolled back (history back, Escape, restore the value, re-click a toggle) and the next candidate is tried.
 
 Everything numeric is computed in code: prices, date ranges, minima. JEV's weak spots (arithmetic, counting, dates) are [documented by TypeSafe](https://docs.typesafe.ai/model-jaggedness/jev-1.13), so JEV only makes semantic judgments.
