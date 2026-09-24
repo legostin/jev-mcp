@@ -236,18 +236,33 @@ export class PageSession extends Emitter<PageEvents> {
     return { settled: false, ms: Date.now() - started };
   }
 
-  private markInput(ms: number): void {
+  /**
+   * Opens a window in which trusted input is jev's own. Busy or background pages (and input relayed through the
+   * extension) deliver it late: the returned function keeps the window open 3 s past the end of the dispatch.
+   */
+  private markInput(ms: number): () => void {
     const now = Date.now();
-    // Busy pages deliver synthetic input to JS late: keep a generous tail before calling input "foreign".
-    this.inputWindows.push({ from: now - 50, to: now + ms + 3000 });
-    this.inputWindows = this.inputWindows.filter((w) => now - w.to < 120_000);
+    const w = { from: now - 50, to: now + ms + 3000 };
+    this.inputWindows.push(w);
+    this.inputWindows = this.inputWindows.filter((x) => now - x.to < 120_000);
+    return () => { w.to = Math.max(w.to, Date.now() + 3000); };
   }
+
+  /** Where jev last pressed the mouse (viewport coordinates): a pointerdown there is jev's, however late it lands. */
+  private lastOwnPoint: { x: number; y: number; at: number } | null = null;
 
   /** True when a trusted input event happened in the page after `since` outside jev's own input windows. */
   async userInputSince(since: number): Promise<boolean> {
-    const last = await this.evaluate<number>('window.__jev ? window.__jev.lastUserInput : 0').catch(() => 0);
+    const ev = await this.evaluate<{ t: number; kind?: string; x?: number; y?: number } | null>(
+      'window.__jev ? { t: window.__jev.lastUserInput, kind: window.__jev.lastInputKind, x: window.__jev.lastInputX, y: window.__jev.lastInputY } : null',
+    ).catch(() => null);
+    const last = ev?.t ?? 0;
     if (!last || last <= since) return false;
-    return !this.inputWindows.some((w) => last >= w.from && last <= w.to);
+    if (this.inputWindows.some((w) => last >= w.from && last <= w.to)) return false;
+    const own = this.lastOwnPoint;
+    if (own && ev?.kind === 'pointerdown' && last >= own.at - 100 && Math.abs((ev.x ?? -1e9) - own.x) <= 2 && Math.abs((ev.y ?? -1e9) - own.y) <= 2) return false;
+    log.info(`foreign ${ev?.kind ?? 'input'} at ${last} (since ${since})`);
+    return true;
   }
 
   /** Ask every frame to tag elements that registered click-like listeners (read by the snapshot). */
@@ -341,19 +356,22 @@ export class PageSession extends Emitter<PageEvents> {
   }
 
   async mouseClick(point: Point, clickCount = 1): Promise<void> {
-    this.markInput(150);
-    const base = { x: point.x, y: point.y, button: 'left', clickCount };
-    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
-    await this.send('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 1 });
-    await sleep(30);
-    await this.send('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 });
+    const done = this.markInput(150);
+    this.lastOwnPoint = { x: point.x, y: point.y, at: Date.now() };
+    try {
+      const base = { x: point.x, y: point.y, button: 'left', clickCount };
+      await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
+      await this.send('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 1 });
+      await sleep(30);
+      await this.send('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 });
+    } finally { done(); }
   }
 
   async hover(backendNodeId: number, sessionId: string | undefined = this.sessionId): Promise<void> {
     await this.scrollIntoView(backendNodeId, sessionId);
     const p = await this.clickablePoint(backendNodeId, sessionId);
-    this.markInput(50);
-    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+    const done = this.markInput(50);
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }).finally(done);
   }
 
   async focus(backendNodeId: number, sessionId: string | undefined = this.sessionId): Promise<void> {
@@ -382,16 +400,18 @@ export class PageSession extends Emitter<PageEvents> {
       }`);
       if (hadValue) await this.press('Backspace');
     }
-    this.markInput(text.length * 40 + 200);
-    if ((opts.mode ?? 'insert') === 'insert') {
-      await this.send('Input.insertText', { text });
-      return;
-    }
-    for (const ch of text) {
-      await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, text: ch, unmodifiedText: ch });
-      await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch });
-      await sleep(25);
-    }
+    const done = this.markInput(text.length * 40 + 200);
+    try {
+      if ((opts.mode ?? 'insert') === 'insert') {
+        await this.send('Input.insertText', { text });
+        return;
+      }
+      for (const ch of text) {
+        await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, text: ch, unmodifiedText: ch });
+        await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch });
+        await sleep(25);
+      }
+    } finally { done(); }
   }
 
   /** Presses a named key ("Enter", "ArrowDown") or a chord ("Control+A", "Meta+A"). */
@@ -401,12 +421,14 @@ export class PageSession extends Emitter<PageEvents> {
     let modifiers = 0;
     for (const m of parts) modifiers |= MODIFIERS[m as keyof typeof MODIFIERS] ?? 0;
     const def = keyDef(keyName);
-    this.markInput(100);
-    await this.send('Input.dispatchKeyEvent', {
-      type: def.text && !modifiers ? 'keyDown' : 'rawKeyDown', key: def.key, code: def.code,
-      windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, text: modifiers ? undefined : def.text, modifiers,
-    });
-    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: def.key, code: def.code, windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, modifiers });
+    const done = this.markInput(100);
+    try {
+      await this.send('Input.dispatchKeyEvent', {
+        type: def.text && !modifiers ? 'keyDown' : 'rawKeyDown', key: def.key, code: def.code,
+        windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, text: modifiers ? undefined : def.text, modifiers,
+      });
+      await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: def.key, code: def.code, windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, modifiers });
+    } finally { done(); }
   }
 
   /** Selects an option of a native <select> by value or visible label (case-insensitive). */
@@ -434,11 +456,13 @@ export class PageSession extends Emitter<PageEvents> {
   /** Scrolls with a mouse wheel at the viewport centre (triggers lazy loading like a real user). */
   async scroll(deltaY: number): Promise<void> {
     const { layoutViewport } = await this.send<{ layoutViewport: { clientWidth: number; clientHeight: number } }>('Page.getLayoutMetrics');
-    this.markInput(300);
-    await this.send('Input.dispatchMouseEvent', {
-      type: 'mouseWheel', x: layoutViewport.clientWidth / 2, y: layoutViewport.clientHeight / 2, deltaX: 0, deltaY,
-    });
-    await sleep(150);
+    const done = this.markInput(300);
+    try {
+      await this.send('Input.dispatchMouseEvent', {
+        type: 'mouseWheel', x: layoutViewport.clientWidth / 2, y: layoutViewport.clientHeight / 2, deltaX: 0, deltaY,
+      });
+      await sleep(150);
+    } finally { done(); }
   }
 
   async navigate(url: string, timeoutMs = 30_000): Promise<void> {
