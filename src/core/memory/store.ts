@@ -1,6 +1,12 @@
 import type { Database } from '../trace/sqlite.ts';
 import { newId } from '../util/ids.ts';
 import type { Hint } from '../questions/step.ts';
+import type { PlanStep } from '../runner/types.ts';
+
+/** One step of a way that worked: on a page (URL pattern), the element that led on. */
+export interface RouteStep { url: string; title: string; sig: string; name: string; kind: string; sub: string }
+/** A way through a site that finished a goal, with the agent's plan if there was one. */
+export interface SiteRoute { id: string; domain: string; goal: string; plan: PlanStep[] | null; steps: RouteStep[]; ok: number; fail: number; updatedAt: number }
 
 export interface MemoryEntry {
   id: string; domain: string; pageKind: string; key: string; sig: string; weight: number;
@@ -23,6 +29,8 @@ export class MemoryStore {
         successes INTEGER, failures INTEGER, consecutive_failures INTEGER, disabled INTEGER, updated_at INTEGER);
       CREATE UNIQUE INDEX IF NOT EXISTS site_memory_uniq ON site_memory(domain, page_kind, key, sig);
       CREATE TABLE IF NOT EXISTS site_hints (id TEXT PRIMARY KEY, domain TEXT, text TEXT, created_at INTEGER);
+      CREATE TABLE IF NOT EXISTS site_routes (id TEXT PRIMARY KEY, domain TEXT, goal TEXT, plan TEXT, steps TEXT, ok INTEGER, fail INTEGER, updated_at INTEGER);
+      CREATE INDEX IF NOT EXISTS site_routes_domain ON site_routes(domain);
     `);
     // Hints remember which step and param they were given for (older rows have none: they apply by wording).
     const cols = new Set((db.prepare('PRAGMA table_info(site_hints)').all() as any[]).map((c) => c.name));
@@ -83,16 +91,44 @@ export class MemoryStore {
       .map((r) => ({ text: r.text, source: 'site' as const, ...(r.step ? { step: r.step } : {}), ...(r.key ? { key: r.key } : {}), ...(r.about ? { about: r.about } : {}) }));
   }
 
-  list(): { entries: MemoryEntry[]; hints: { id: string; domain: string; text: string }[] } {
+  private route(r: any): SiteRoute {
+    return { id: r.id, domain: r.domain, goal: r.goal, plan: r.plan ? JSON.parse(r.plan) : null, steps: JSON.parse(r.steps), ok: r.ok, fail: r.fail, updatedAt: r.updated_at };
+  }
+
+  /** Saves the way a goal was reached; the same goal on the same site updates its route. */
+  saveRoute(domain: string, goal: string, plan: PlanStep[] | null, steps: RouteStep[]): void {
+    if (!domain || !steps.length) return;
+    const r = this.db.prepare('SELECT id FROM site_routes WHERE domain = ? AND goal = ?').get(domain, goal) as any;
+    if (r) {
+      this.db.prepare('UPDATE site_routes SET plan = ?, steps = ?, ok = ok + 1, updated_at = ? WHERE id = ?').run(plan ? JSON.stringify(plan) : null, JSON.stringify(steps), Date.now(), r.id);
+    } else {
+      this.db.prepare('INSERT INTO site_routes (id, domain, goal, plan, steps, ok, fail, updated_at) VALUES (?, ?, ?, ?, ?, 1, 0, ?)')
+        .run(newId('rt'), domain, goal, plan ? JSON.stringify(plan) : null, JSON.stringify(steps), Date.now());
+    }
+  }
+
+  /** Routes worth offering for a site: those that worked more often than they failed recently. */
+  routes(domain: string, limit = 8): SiteRoute[] {
+    return (this.db.prepare('SELECT * FROM site_routes WHERE domain = ? AND fail < ok + 2 ORDER BY ok DESC, updated_at DESC LIMIT ?').all(domain, limit) as any[])
+      .map((r) => this.route(r));
+  }
+
+  routeResult(id: string, ok: boolean): void {
+    this.db.prepare(`UPDATE site_routes SET ${ok ? 'ok = ok + 1' : 'fail = fail + 1'}, updated_at = ? WHERE id = ?`).run(Date.now(), id);
+  }
+
+  list(): { entries: MemoryEntry[]; hints: { id: string; domain: string; text: string }[]; routes: SiteRoute[] } {
     return {
       entries: (this.db.prepare('SELECT * FROM site_memory ORDER BY domain, key, weight DESC').all() as any[]).map((r) => this.row(r)),
       hints: this.db.prepare('SELECT id, domain, text, step, key, about FROM site_hints ORDER BY domain, created_at').all() as any[],
+      routes: (this.db.prepare('SELECT * FROM site_routes ORDER BY domain, ok DESC').all() as any[]).map((r) => this.route(r)),
     };
   }
 
   remove(id: string): void {
     this.db.prepare('DELETE FROM site_memory WHERE id = ?').run(id);
     this.db.prepare('DELETE FROM site_hints WHERE id = ?').run(id);
+    this.db.prepare('DELETE FROM site_routes WHERE id = ?').run(id);
   }
 
   setWeight(id: string, weight: number): void {

@@ -102,7 +102,9 @@ export function TaskView({ id }: { id: string }) {
             <div class="timing" title={Object.entries(t).map(([k, v]) => `${k}: ${fmtMs(v as number)}`).join(', ')}>
               {['observe', 'assess', 'execute'].map((k) => <span style={{ width: `${((t[k] ?? 0) / total) * 100}%`, background: TIMING_COLORS[k] }} />)}
             </div>
-            {s.notes?.assess && <div class="muted small">page kind: {s.notes.assess.pageKind} · goal reached {Number(s.notes.assess.goalReached).toFixed(2)} · results {Number(s.notes.assess.resultsMatch).toFixed(2)}</div>}
+            {s.notes?.assess && <div class="muted small">page kind: {s.notes.assess.pageKind} · goal reached {Number(s.notes.assess.goalReached).toFixed(2)} · results {Number(s.notes.assess.resultsMatch).toFixed(2)}
+              {s.notes.assess.wayProgress && <> · progress {s.notes.assess.wayProgress.level}/4 ({Number(s.notes.assess.wayProgress.p).toFixed(2)})</>}
+              {s.notes.assess.situation && <> · situation {s.notes.assess.situation.kind} ({Number(s.notes.assess.situation.confidence).toFixed(2)})</>}</div>}
             {s.diff && <Json label="Page changes" value={s.diff} />}
             {s.screenshot && <img class="shot" src={`/api/blob/${s.screenshot}`} onClick={() => setZoom(`/api/blob/${s.screenshot}`)} />}
             {stepCalls.map((c) => <CallView call={c} thresholds={thresholds} />)}

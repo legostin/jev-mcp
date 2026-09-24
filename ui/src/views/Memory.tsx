@@ -3,7 +3,7 @@ import { api, fmtTime } from '../api.ts';
 
 export function Memory() {
   const [data, setData] = useState<any>(null);
-  const load = () => api('/memory').then(setData).catch(() => setData({ entries: [], hints: [] }));
+  const load = () => api('/memory').then(setData).catch(() => setData({ entries: [], hints: [], routes: [] }));
   useEffect(() => { load(); }, []);
   if (!data) return <p class="muted">Loading…</p>;
   const remove = (id: string) => api(`/memory/${id}`, { method: 'DELETE' }).then(load);
@@ -31,6 +31,20 @@ export function Memory() {
         </tbody>
       </table>
       {!data.entries.length && <p class="muted">Nothing learned yet.</p>}
+      <h2>Routes</h2>
+      <p class="muted">Ways through a site that finished a goal. A new task of the same kind (JEV compares the goals) follows the route first; every step is still checked, and a route that misleads is counted and dropped.</p>
+      {(data.routes ?? []).map((r: any) => (
+        <div class="row">
+          <b>{r.domain}</b>
+          <span class="grow">
+            {r.goal}
+            <div class="muted small">{r.steps.map((st: any) => `"${st.name}"`).join(' → ')}{r.plan ? ` · plan: ${r.plan.map((p: any) => p.do).join(' → ')}` : ''}</div>
+          </span>
+          <span class="muted">{r.ok} ✓ / {r.fail} ✗ · {fmtTime(r.updatedAt)}</span>
+          <button class="danger" onClick={() => remove(r.id)}>Delete</button>
+        </div>
+      ))}
+      {!(data.routes ?? []).length && <p class="muted">No routes yet: a task that reaches its goal saves the way it took.</p>}
       <h2>Site hints</h2>
       {data.hints.map((h: any) => (
         <div class="row"><b>{h.domain}</b><span class="grow">{h.text}</span><button class="danger" onClick={() => remove(h.id)}>Delete</button></div>

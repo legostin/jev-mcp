@@ -29,6 +29,8 @@ import { isSignInParam, Journal, type JournalData } from './journal.ts';
 import { cleanText } from '../perception/naming.ts';
 import { Plan } from './plan.ts';
 import { consultReport, CONSULT_ANSWERS } from './consult.ts';
+import { buildRoutePick, routeElement, routeStep } from './routes.ts';
+import type { RouteStep, SiteRoute } from '../memory/store.ts';
 import { thresholdsFor, hostOf } from './thresholds.ts';
 import { dateRange, fieldHoldsValue, isEmptyField, isValueLabel, normalizeText, paramKind, requiredEmptyFields, showsValue } from './progress.ts';
 import { Emitter } from '../util/events.ts';
@@ -121,6 +123,7 @@ export interface TaskCheckpoint {
   maxStepsBonus?: number; budgetBonus?: number; idleMs?: number; savedAt?: number;
   journal?: JournalData;
   plan?: { steps: PlanStep[]; index: number } | null;
+  routeLog?: Array<RouteStep & { step: number }>;
 }
 
 type TaskEvents = {
@@ -215,6 +218,10 @@ export class Task extends Emitter<TaskEvents> {
   private explored = new Set<string>();
   /** Menus and sections the task opened (never toggled closed again by exploring). */
   private exploredVia = new Set<string>();
+  /** A way that worked on this site before (chosen at the start), whether it misled us, and the way taken now. */
+  private route: SiteRoute | null = null;
+  private routeMissed = false;
+  private routeLog: Array<RouteStep & { step: number }> = [];
   /** The agent's milestones, if it gave any (in the spec or in an answer). */
   private plan: Plan | null = null;
   /** A consult asked without stopping: the task explores safe steps until the answer comes or the budget ends. */
@@ -423,6 +430,7 @@ export class Task extends Emitter<TaskEvents> {
     if (this.deps.memory && this.deps.getConfig().memory.enabled) {
       const host = hostOf(this.spec.site ?? (await page.url()));
       for (const h of this.deps.memory.hints(host)) if (!this.hints.some((x) => x.text === h.text)) this.hints.push(h);
+      await this.pickRoute(host);
     }
     this.lastInputCheck = this.now();
   }
@@ -463,6 +471,7 @@ export class Task extends Emitter<TaskEvents> {
     t.idleMs = cp.idleMs ?? 0;
     t.journal = Journal.from(cp.journal);
     t.plan = Plan.from(cp.plan) ?? t.plan;
+    t.routeLog = cp.routeLog ?? [];
     // The daemon was down since the last checkpoint: that time is idle too, until the task is resumed.
     t.idleSince = cp.savedAt ?? Date.now();
     t.state = 'interrupted';
@@ -480,6 +489,7 @@ export class Task extends Emitter<TaskEvents> {
       maxStepsBonus: this.maxStepsBonus, budgetBonus: this.budgetBonus, idleMs: this.idleMs, savedAt: this.now(),
       journal: this.journal.toJSON(),
       plan: this.plan?.toJSON() ?? null,
+      routeLog: this.routeLog,
     };
   }
 
@@ -564,6 +574,7 @@ export class Task extends Emitter<TaskEvents> {
 
   private finish(status: TaskState, out?: Partial<TaskResult>, error?: string): void {
     if (this.finished) return;
+    this.rememberRoute(status);
     const result: TaskResult = { status, ...out, error, stats: this.stats() };
     this.finalResult = this.mask(result);
     this.deps.trace.updateTask(this.id, { state: status, result: this.finalResult, stats: result.stats });
@@ -718,6 +729,42 @@ export class Task extends Emitter<TaskEvents> {
       for (const k of keys) if (this.status[k] === 'pending') this.status[k] = 'not_needed';
       this.journal.addFact('signed_in', 'The user is already signed in: sign-in details are not needed.', this.stepIdx);
       this.note(`already signed in: ${keys.join(', ')} not needed`);
+    }
+  }
+
+  /** A route that worked on this site for the same kind of task: its plan, and its elements tried first. */
+  private async pickRoute(host: string): Promise<void> {
+    const routes = this.deps.memory?.routes(host) ?? [];
+    if (!routes.length) return;
+    const res = await runQuestions(this.qctx(), buildRoutePick(this.spec.goal, routes, this.budget()));
+    const pick = choiceOf(res.answers, 'route');
+    if (pick.choice === 'none' || gateChoice(pick, this.th().assess.choice) !== 'act') return;
+    this.route = routes[Number(pick.choice.slice(1))] ?? null;
+    if (!this.route) return;
+    if (!this.plan && this.route.plan?.length) this.plan = new Plan(this.route.plan);
+    this.note(`following a route that worked on this site before: "${this.route.goal}"`);
+  }
+
+  /** The route's element on this page (never one already taken or rolled back here). */
+  private routeElementFor(model: Model, sub: 'enter' | 'explore', regionId?: string): ElementNode | undefined {
+    if (!this.route || this.routeMissed) return undefined;
+    const rejected = new Set((this.rejected.get(sub) ?? []).map((r) => r.sig));
+    const skip = (sig: string) => rejected.has(sig) || this.enteredVia.has(sig) || this.exploredVia.has(sig);
+    return routeElement(model, this.route.steps, skip, regionId ? regionAndDescendants(model, regionId) : undefined);
+  }
+
+  private recordRoute(model: Model, el: ElementNode, sub: string): void {
+    this.routeLog.push({ ...routeStep(model, el, sub), step: this.stepIdx });
+  }
+
+  /** On success the way taken is saved for the site; a route that was followed gets its outcome counted. */
+  private rememberRoute(status: TaskState): void {
+    const memory = this.deps.memory;
+    if (!memory || !this.deps.getConfig().memory.enabled) return;
+    const host = hostOf(this.spec.site ?? this.model?.url ?? '');
+    if (this.route) memory.routeResult(this.route.id, status === 'done' && !this.routeMissed);
+    if (status === 'done' && this.routeLog.length) {
+      memory.saveRoute(host, this.spec.goal, this.plan?.steps ?? null, this.routeLog.map(({ step: _, ...st }) => st));
     }
   }
 
@@ -988,6 +1035,8 @@ export class Task extends Emitter<TaskEvents> {
    */
   private async trialFailed(sub: Subintent, el: ElementNode, before: Model, why: string): Promise<Outcome> {
     this.journal.deadEnd(before.url, cleanText(el.name || el.text || el.ref, 60), why);
+    this.routeLog = this.routeLog.filter((r) => r.step !== this.stepIdx);
+    if (this.route?.steps.some((st) => st.sig === el.sig)) this.routeMissed = true;
     const page = await this.page();
     let wentBack = false;
     for (let i = 0; i < 3; i++) {
@@ -1883,6 +1932,8 @@ export class Task extends Emitter<TaskEvents> {
     this.explored.add(model.signature);
     const openers = this.openers(model);
     const others = [...model.elements.values()].filter((e) => !openers.includes(e)).map((e) => e.sig);
+    const fromRoute = this.routeElementFor(model, 'explore');
+    if (fromRoute && openers.includes(fromRoute)) this.forcedRef = { sub: 'explore', ref: fromRoute.ref };
     const g = await this.ground(sub, {
       target: 'the control that opens a menu, tab or collapsed section of this page where what `goal` needs next may be (a menu button, a tab, "Show more")',
       kinds: ['button', 'clickable', 'tab', 'link', 'menuitem'], action: 'click', trial: true, exclude: others,
@@ -1902,6 +1953,7 @@ export class Task extends Emitter<TaskEvents> {
     }
     this.settleGrounding(true);
     this.exploredVia.add(g.el.sig);
+    this.recordRoute(model, g.el, 'explore');
     return { outcome: 'ok', note: `opened ${g.el.ref} "${g.el.name}" to look for what the goal needs next`, action: { type: 'click', ref: g.el.ref } };
   }
 
@@ -1916,6 +1968,9 @@ export class Task extends Emitter<TaskEvents> {
       : 'the button or link that leads toward doing `goal`: it starts it, or opens the section or account area where it is done; not a search';
     // With closed menus or sections on the page, an unsure pick is not asked about: exploring them comes first.
     const canExplore = !this.explored.has(model.signature) && this.openers(model).length > 0;
+    // A route that worked here before names the element: it is tried first (the usual checks still apply).
+    const fromRoute = this.routeElementFor(model, 'enter');
+    if (fromRoute) this.forcedRef = { sub: 'enter', ref: fromRoute.ref };
     // Ways in already taken lead here (an opener clicked again would only close its menu); links back to pages the
     // task came through lead away, and links to this very page (the current tab) lead nowhere.
     const here = pageAddress(model.url, model.url);
@@ -1950,11 +2005,13 @@ export class Task extends Emitter<TaskEvents> {
     if (!menu) {
       if (!(await this.leadsToGoal(after))) return failed(g.el, 'the page it opened does not lead to the goal');
       this.enteredVia.add(g.el.sig);
+      this.recordRoute(model, g.el, 'enter');
       if (after.url !== model.url) this.enteredFrom.add(pageAddress(model.url, model.url));
       this.settleGrounding(true);
       return { outcome: 'ok', note: `${opened} to get where the goal is done`, action: { type: 'click', ref: g.el.ref } };
     }
-    const item = await this.ground(sub, {
+    const routeItem = this.routeElementFor(after, 'enter', menu.id);
+    const item = routeItem ? { el: routeItem, trial: false } : await this.ground(sub, {
       target: 'the menu item that leads to the part of the site where the goal is done',
       kinds: ['link', 'button', 'clickable', 'menuitem'], regionId: menu.id, action: 'click', trial: true,
     }, 'enter:menu');
@@ -1975,6 +2032,8 @@ export class Task extends Emitter<TaskEvents> {
     if (!(await this.leadsToGoal(landed))) return failed(item.el, 'the page it opened does not lead to the goal');
     this.enteredVia.add(g.el.sig);
     this.enteredVia.add(item.el.sig);
+    this.recordRoute(model, g.el, 'enter');
+    this.recordRoute(after, item.el, 'enter');
     if (landed.url !== model.url) this.enteredFrom.add(pageAddress(model.url, model.url));
     this.settleGrounding(true);
     return { outcome: 'ok', note: `${opened} and chose "${item.el.name}" to get where the goal is done`, action: { type: 'click', ref: item.el.ref } };

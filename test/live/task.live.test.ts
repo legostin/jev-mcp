@@ -168,6 +168,22 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     void status;
   }, 400_000);
 
+  it('follows the route that worked on the first run', async () => {
+    const run = async () => {
+      const created = await client.call('task.create', { goal: 'Open the archive of my orders in the shop', site: fixtures.url('menus.html') });
+      const { result, questions } = await runToEnd(created.task_id, pickTop);
+      const trace = await client.call('task.trace', { task_id: created.task_id });
+      console.log(`route run: ${trace.steps.map((s: any) => `${s.subintent} ${s.notes?.note ?? ''}`).join(' | ')} · ${result.stats.jev_calls} calls`);
+      expect(result.status).toBe('done');
+      expect(questions).toHaveLength(0);
+      return result.stats;
+    };
+    const first = await run();
+    const second = await run();
+    expect(second.steps).toBeLessThanOrEqual(first.steps);
+    expect(second.jev_calls).toBeLessThan(first.jev_calls);
+  }, 400_000);
+
   it('finds a link hidden in a collapsed section of the page', async () => {
     const created = await client.call('task.create', { goal: 'Open my order archive', site: fixtures.url('menus.html') });
     const { result, questions } = await runToEnd(created.task_id, pickTop);

@@ -540,4 +540,32 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(task.openQuestions).toEqual([]);
     expect(task.state).toBe('done');
   });
+  it('saves the way that worked and follows it on the next run of the same kind of task', async () => {
+    const memory = new MemoryStore(new DatabaseSync(':memory:'));
+    const url = (req: EvaluateRequest) => String((req.state as any).page?.url ?? '');
+    const script = () => scripted({
+      pageKind: () => 'other',
+      targets: [[/leads toward doing/i, /Кабинет/], [/menu item that leads/i, /Мои объявления/]],
+      goalReached: (req) => (url(req).includes('view=ads') ? 0.95 : 0.05),
+    });
+    const run = async () => {
+      const page = await h.open('account.html');
+      const jev = script();
+      const task = makeTask({ goal: 'Open the list of my ads in the account' }, page, jev, memory);
+      const questions: any[] = [];
+      task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: 'abort' }), 10); });
+      await task.start();
+      expect(questions).toEqual([]);
+      expect(task.state).toBe('done');
+      const grounds = trace.getJevCalls({ taskId: task.id, template: 'ground.element' }).length;
+      const notes = trace.getSteps(task.id).map((st) => (st.notes as { note?: string } | null)?.note ?? '').join(' | ');
+      return { grounds, notes, recent: (task.statusView() as any).recent_steps as string[] };
+    };
+    const first = await run();
+    expect(memory.list().routes.map((r) => r.steps.map((st) => st.name))).toEqual([['Кабинет ▾', 'Мои объявления']]);
+    const second = await run();
+    expect(second.grounds).toBeLessThan(first.grounds);
+    expect(second.grounds).toBe(0);
+    expect(memory.list().routes[0].ok).toBe(3);
+  });
 });
