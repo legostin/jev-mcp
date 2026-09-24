@@ -9,7 +9,7 @@ import { diffModels } from '../perception/diff.ts';
 import { describeElement, renderCandidate, renderDiff, renderOverview } from '../perception/render.ts';
 import { parseCalendarCells } from '../perception/calendar.ts';
 import { candidateElements, groundByIntent, regionAndDescendants, type GroundResult, type Intent } from '../questions/templates/ground.ts';
-import { buildAssess, buildLeads, readAssess, type AssessOutput } from '../questions/templates/assess.ts';
+import { buildAssess, buildGoesOn, buildLeads, readAssess, type AssessOutput } from '../questions/templates/assess.ts';
 import { buildDecide, readDecide, type SubintentOption } from '../questions/templates/decide.ts';
 import { buildSuggestionPick, buildOptionPick, buildGoalPrefs } from '../questions/templates/widget.ts';
 import { buildActionClass, readActionClass } from '../questions/templates/safety.ts';
@@ -189,6 +189,8 @@ export class Task extends Emitter<TaskEvents> {
   private enteredFrom = new Set<string>();
   /** Dialogs that opened on the same page in answer to the task's own click (signatures). */
   private openedByUs = new Set<string>();
+  /** Whether the goal can go on from such a dialog (by signature). */
+  private goesOn = new Map<string, boolean>();
   /** Choice groups already given "any" value. */
   private anyGroups = new Set<string>();
   private errorPages = 0;
@@ -795,6 +797,11 @@ export class Task extends Emitter<TaskEvents> {
       out = { outcome: 'failed', note: `${subLabel} failed: ${err.message}${err.detail ? ` (${err.detail})` : ''}` };
     }
     timings.execute = this.now() - t2;
+    // Any click of ours that opened a dialog on the same page (a choice that shows a payment step) is noted.
+    const act = (out.action as { type?: string } | undefined)?.type;
+    if (out.outcome === 'ok' && (act === 'click' || act === 'choose') && sub.type !== 'dismiss_overlay' && !this.finished) {
+      this.noteOpened(model, await this.observe(false));
+    }
     if (this.trialRolledBack) {
       // The page is back where it was, but one candidate fewer remains: that is progress, not a loop.
       this.trialRolledBack = false;
@@ -920,7 +927,7 @@ export class Task extends Emitter<TaskEvents> {
     for (const r of blocking) {
       const kind = a.overlays[r.id]?.kind ?? 'other';
       // A dialog that is part of the goal (pay, choose a plan or card, confirm) is worked through, not closed.
-      if (this.goalStep(r, a)) continue;
+      if (await this.checkGoalStep(model, r, a)) continue;
       if (kind === 'captcha') {
         return { type: 'blocker', kind: 'captcha', summary: 'The site shows a CAPTCHA / bot check. Solve it in the browser (or ask the user to), then answer "continue".' };
       }
@@ -1510,9 +1517,12 @@ export class Task extends Emitter<TaskEvents> {
     this.entered.add(model.signature);
     // No examples in the target: "Post an ad" among them drew JEV to posting when the goal was about an existing ad.
     const target = 'the button or link that leads toward doing `goal`: it starts it, or opens the section or account area where it is done; not a search';
-    // Ways in already taken lead here (an opener clicked again would only close its menu), and links back to pages
-    // the task came through lead away.
-    const back = [...model.elements.values()].filter((e) => e.kind === 'link' && e.href && this.enteredFrom.has(pageAddress(e.href, model.url))).map((e) => e.sig);
+    // Ways in already taken lead here (an opener clicked again would only close its menu); links back to pages the
+    // task came through lead away, and links to this very page (the current tab) lead nowhere.
+    const here = pageAddress(model.url, model.url);
+    // Fragment ("#") links are scripted actions or anchors, not other addresses.
+    const back = [...model.elements.values()].filter((e) => e.kind === 'link' && e.href && !e.href.includes('#')
+      && (this.enteredFrom.has(pageAddress(e.href, model.url)) || pageAddress(e.href, model.url) === here)).map((e) => e.sig);
     const g = await this.ground(sub, {
       target, kinds: ['link', 'button', 'clickable', 'menuitem', 'tab'], action: 'click', trial: true, exclude: [...this.enteredVia, ...back],
     }, 'enter');
@@ -1571,13 +1581,24 @@ export class Task extends Emitter<TaskEvents> {
     return { outcome: 'ok', note: `${opened} and chose "${item.el.name}" to get where the goal is done`, action: { type: 'click', ref: item.el.ref } };
   }
 
-  /**
-   * A dialog that is a step of the goal: JEV says so, or it opened in answer to the task's own click on the same
-   * page and JEV names no obstacle in it (a "limit reached, pay to publish" notice read as "other").
-   */
+  /** A dialog that is a step of the goal: JEV names it so, or `checkGoalStep` found the goal goes on from it. */
   private goalStep(r: Region, a: AssessOutput): boolean {
+    return a.overlays[r.id]?.kind === 'goal_step' || this.goesOn.get(r.sig) === true;
+  }
+
+  /**
+   * A dialog the task's own click opened on the same page and JEV read as "other" or "promo" (a "free limit
+   * reached, pay to publish" notice) gets one more look: can the goal go on from it? Asked once per dialog.
+   */
+  private async checkGoalStep(model: Model, r: Region, a: AssessOutput): Promise<boolean> {
     const kind = a.overlays[r.id]?.kind;
-    return kind === 'goal_step' || (this.openedByUs.has(r.sig) && (kind === undefined || kind === 'other'));
+    if (kind === 'goal_step') return true;
+    if (!this.openedByUs.has(r.sig) || (kind !== undefined && kind !== 'other' && kind !== 'promo')) return false;
+    if (!this.goesOn.has(r.sig)) {
+      const res = await runQuestions(this.qctx(), buildGoesOn(model, r.id, this.spec.goal, hintsFor(this.hints), this.budget()));
+      this.goesOn.set(r.sig, gateNoul(noulOf(res.answers, 'goes_on'), this.th().assess.noul) !== 'no');
+    }
+    return this.goesOn.get(r.sig)!;
   }
 
   /** Remembers blocking dialogs the click between two page states opened without leaving the page. */
@@ -1645,6 +1666,8 @@ export class Task extends Emitter<TaskEvents> {
       const chips = own.filter((e) => (e.kind === 'button' || e.kind === 'clickable') && !e.states.disabled && (e.name || '').length > 0 && (e.name || '').length <= 30);
       if (chips.length < 2 || chips.length > 20 || chips.length !== own.filter((e) => e.interactive).length) continue;
       if (chips.some((c) => c.states.selected || c.states.checked || paramRefs.has(c.ref))) continue;
+      // Buttons that pay, publish or delete are a choice of action ("Pay 750", "Post with a discount"), not a value.
+      if (chips.some((c) => deterministicRisk(c, model).irreversible)) continue;
       return { ref: chips[0].ref, group };
     }
     return null;
@@ -1692,6 +1715,10 @@ export class Task extends Emitter<TaskEvents> {
       return { outcome: 'ok', note: `left ${describeElement(el)} alone: a param already covers it` };
     }
     const picked = options.find((o) => o.key === choiceOf(res.answers, 'pick').choice) ?? options[0];
+    if (picked.el && await this.guard(picked.el, 'choose a value for a required field', false) === 'skip') {
+      this.anyGroups.add(sub.group);
+      return { outcome: 'skipped', note: `choosing "${picked.label}" not approved` };
+    }
     if (picked.value !== undefined) await page.selectOption(el.backendNodeId, picked.value, el.frameSessionId);
     else if (picked.el) await this.click(picked.el);
     await this.settle();

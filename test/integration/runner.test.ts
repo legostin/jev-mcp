@@ -103,7 +103,7 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
         out[id] = { type: 'choice', choice: k, probabilities: { [k]: 1 }, confidence: 1 };
       } else if (q.type === 'noul') {
         let v = 0.05;
-        if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same' || id === 'goal_is_search' || id === 'leads' || id.startsWith('param_here_')) v = 0.95;
+        if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same' || id === 'goal_is_search' || id === 'leads' || id === 'goes_on' || id.startsWith('param_here_')) v = 0.95;
         if (id === 'goal_reached') v = s.goalReached?.(req) ?? 0.05;
         if (s.nouls?.[id] !== undefined) v = s.nouls[id];
         const fn = s.noulFn?.(id, req);
@@ -342,9 +342,9 @@ describe('Task runner (scripted JEV, real browser)', () => {
     const questions: any[] = [];
     task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: 'abort' }), 10); });
     await task.start();
-    expect(questions).toEqual([]);
-    expect(task.state).toBe('done');
     const notes = trace.getSteps(task.id).map((st) => (st.notes as { note?: string } | null)?.note ?? '').join(' | ');
+    expect(questions.map((q) => `${q.kind}: ${q.summary}`), notes).toEqual([]);
+    expect(task.state).toBe('done');
     expect(notes).toMatch(/does not lead to the goal/);
     expect(notes).toMatch(/"Кабинет ▾" and chose "Мои объявления"/);
     expect(await page.evaluate('location.search')).toBe('?view=ads');
@@ -365,6 +365,11 @@ describe('Task runner (scripted JEV, real browser)', () => {
     const steps = trace.getSteps(task.id);
     expect(questions.every((q) => q.kind === 'risk_confirm')).toBe(true);
     expect(steps.some((st) => /dismiss_overlay/.test(st.subintent ?? ''))).toBe(false);
+    // The notice's buttons are a choice of action, never "filled" as a value.
+    const note = (st: { notes?: unknown }) => (st.notes as { note?: string } | null)?.note ?? '';
+    expect(steps.some((st) => st.subintent === 'fill_any' && /скидкой|оплатой/.test(note(st)))).toBe(false);
+    // Going on to the payment is not the payment: only "Pay" itself is confirmed.
+    expect(questions.map((q) => q.summary)).toEqual([expect.stringMatching(/Оплатить 1 500/)]);
     expect(await page.evaluate('document.getElementById("done").textContent')).toMatch(/оплачено сохранённой картой/);
     expect(task.state).toBe('done');
   });

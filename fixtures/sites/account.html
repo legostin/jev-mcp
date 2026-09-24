@@ -95,11 +95,12 @@ if (q.get('view') === 'ads') {
       if (!q.get('notice')) return openPayment();
       const note = document.createElement('div');
       note.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20';
+      // The buttons sit under the heading: a group of buttons that is a choice of action, not of a value.
       note.innerHTML = `<div style="position:fixed;left:50%;top:30%;transform:translateX(-50%);background:#fff;padding:20px;border-radius:12px;width:380px">
         <button type="button" id="noteclose" style="position:absolute;right:10px;top:8px">Закрыть</button>
-        <h3>Бесплатные размещения закончились</h3>
+        <div><h3>Бесплатные размещения закончились</h3>
         <p>В этом месяце вы уже разместили три объявления бесплатно.</p>
-        <button type="button" id="notego" class="primary">Продолжить с оплатой 750 ₸</button> <button type="button">Подробнее</button></div>`;
+        <button type="button">Разместить со скидкой</button> <button type="button" id="notego" class="primary">Продолжить с оплатой 750 ₸</button></div></div>`;
       document.body.appendChild(note);
       document.getElementById('noteclose').onclick = () => note.remove();
       document.getElementById('notego').onclick = () => { note.remove(); openPayment(); };

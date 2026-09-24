@@ -127,6 +127,20 @@ export function buildLeads(model: PageModel, goal: string, hints: string[], budg
   return { template: 'assess.leads', state, questions: { leads: { type: 'noul', instructions: 'Does `page` lead toward `goal`: is it where `goal` is done, or a step on the way there?' } } };
 }
 
+/**
+ * A dialog the task's own click opened that JEV called "other" or "promo": can the goal go on from it? A price
+ * notice with "Continue to payment" scores 0.55-0.6, a newsletter offer 0.05-0.15.
+ */
+export function buildGoesOn(model: PageModel, regionId: string, goal: string, hints: string[], budgetTokens: number): QuestionSet {
+  const state = buildState({
+    goal, hints, page: { url: model.url, title: model.title, regions: regionLines(model), elements: elementLines(model, summaryRefs(model)) },
+  }, budgetTokens);
+  return {
+    template: 'assess.goes_on', state,
+    questions: { goes_on: { type: 'noul', instructions: `Can \`goal\` go on from \`page.regions.${regionId}\`: does it offer a way to pay, continue or confirm what \`goal\` asks for?` } },
+  };
+}
+
 export function readAssess(answers: Record<string, Answer>, input: AssessInput): AssessOutput {
   const pk = choiceOf(answers, 'page_kind');
   const overlays: AssessOutput['overlays'] = {};
