@@ -332,9 +332,24 @@ export class PageSession extends Emitter<PageEvents> {
     return { x: candidates[idx].x + offset.x, y: candidates[idx].y + offset.y };
   }
 
+  /** Centre of the visible label of a hidden radio or checkbox (custom-styled inputs hide the input itself). */
+  private async labelPoint(backendNodeId: number, sessionId: string | undefined): Promise<Point | null> {
+    const p = await this.callOn<{ x: number; y: number } | null>(backendNodeId, sessionId, `function(){
+      const l = (this.labels && this.labels[0]) || (this.closest && this.closest('label'));
+      if (!l) return null;
+      l.scrollIntoView({ block: 'center' });
+      const r = l.getBoundingClientRect();
+      return r.width >= 1 && r.height >= 1 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+    }`).catch(() => null);
+    if (!p) return null;
+    const frame = this.frames().find((f) => f.sessionId === sessionId) ?? this.frames()[0];
+    const off = await this.frameOffset(frame);
+    return { x: p.x + off.x, y: p.y + off.y };
+  }
+
   async click(backendNodeId: number, opts: { sessionId?: string; force?: boolean; clickCount?: number } = {}): Promise<void> {
     const sessionId = opts.sessionId ?? this.sessionId;
-    await this.scrollIntoView(backendNodeId, sessionId);
+    await this.scrollIntoView(backendNodeId, sessionId).catch(() => {});
     let point: Point;
     try {
       point = await this.clickablePoint(backendNodeId, sessionId).catch(async (e) => {
@@ -345,6 +360,11 @@ export class PageSession extends Emitter<PageEvents> {
         return this.clickablePoint(backendNodeId, sessionId);
       });
     } catch (e) {
+      // A hidden input behind a styled label: press the label, as a person would.
+      if (e instanceof ActionError && e.reason === 'not_visible') {
+        const lp = await this.labelPoint(backendNodeId, sessionId);
+        if (lp) { await this.mouseClick(lp, opts.clickCount ?? 1); return; }
+      }
       if (!(opts.force && e instanceof ActionError && e.reason === 'occluded')) throw e;
       const { model } = await this.send<{ model: { content: number[] } }>('DOM.getBoxModel', { backendNodeId }, sessionId);
       const c = model.content;

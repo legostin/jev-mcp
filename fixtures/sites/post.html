@@ -22,6 +22,10 @@
   .primary:disabled { background: #9bbbe6; cursor: default; }
   .ghost { padding: 12px 24px; background: #fff; border: 1px solid #1f7ae0; color: #1f7ae0; border-radius: 10px; font-size: 16px; cursor: pointer; }
   #done { font-size: 20px; color: #1a7f37; }
+  /* Custom-styled choices: the input has no size, the label is the button. */
+  fieldset.styled input { width: 0; height: 0; margin: 0; border: 0; }
+  fieldset.styled label { padding: 8px 14px; border: 1px solid #ccc; border-radius: 8px; cursor: pointer; }
+  fieldset.styled label:has(input:checked) { background: #e6f0ff; }
 </style>
 </head>
 <body>
@@ -61,8 +65,9 @@ function grid(values, onPick) {
   }
   return g;
 }
-function radios(legend, name, values, onChange) {
+function radios(legend, name, values, onChange, styled = false) {
   const f = document.createElement('fieldset');
+  if (styled) f.className = 'styled';
   f.innerHTML = `<legend>${legend}</legend>` + values.map((v) => `<label><input type="radio" name="${name}" value="${v}"> ${v}</label>`).join('');
   f.addEventListener('change', (e) => onChange(e.target.value));
   return f;
@@ -84,7 +89,7 @@ function render() {
     next.onclick = () => go(3);
     form.appendChild(next);
   } else if (s.step === 3) {
-    form.appendChild(radios('Двигатель', 'engine', ['Бензиновый', 'Гибридный', 'Дизельный'], () => {}));
+    form.appendChild(radios('Двигатель', 'engine', ['Бензиновый', 'Гибридный', 'Дизельный'], () => {}, true));
     form.insertAdjacentHTML('beforeend', `
       <div class="row"><label for="color">Цвет</label><select id="color" required><option value="">Выберите цвет</option><option>Белый</option><option>Чёрный</option><option>Серый</option></select></div>
       <div class="row"><label for="city">Город</label><select id="city"><option value="">Выберите город</option><option>Алматы</option><option>Астана</option><option>Павлодар</option></select></div>

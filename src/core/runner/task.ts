@@ -1533,7 +1533,6 @@ export class Task extends Emitter<TaskEvents> {
 
   /** policy.fill_required "any": JEV picks the option that fits the goal and hints best, else the first one. */
   private async fillAny(sub: Extract<Subintent, { type: 'fill_any' }>, model: Model): Promise<Outcome> {
-    this.anyGroups.add(sub.group);
     const el = model.elements.get(sub.ref);
     if (!el) return { outcome: 'retry', note: 'the field is gone' };
     const page = await this.page();
@@ -1565,6 +1564,8 @@ export class Task extends Emitter<TaskEvents> {
     if (picked.value !== undefined) await page.selectOption(el.backendNodeId, picked.value, el.frameSessionId);
     else if (picked.el) await this.click(picked.el);
     await this.settle();
+    // Only a group that was actually answered is skipped from now on (a failed click can be retried).
+    this.anyGroups.add(sub.group);
     this.dirty = true;
     return { outcome: 'ok', note: `chose "${picked.label}" for ${describeElement(el)} (required, no param)`, action: { type: 'choose', ref: picked.el?.ref ?? el.ref } };
   }
