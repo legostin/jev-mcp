@@ -9,7 +9,7 @@ import { diffModels } from '../perception/diff.ts';
 import { describeElement, renderCandidate, renderDiff, renderOverview } from '../perception/render.ts';
 import { parseCalendarCells } from '../perception/calendar.ts';
 import { candidateElements, groundByIntent, regionAndDescendants, type GroundResult, type Intent } from '../questions/templates/ground.ts';
-import { buildAssess, readAssess, type AssessOutput } from '../questions/templates/assess.ts';
+import { buildAssess, buildLeads, readAssess, type AssessOutput } from '../questions/templates/assess.ts';
 import { buildDecide, readDecide, type SubintentOption } from '../questions/templates/decide.ts';
 import { buildSuggestionPick, buildOptionPick, buildGoalPrefs } from '../questions/templates/widget.ts';
 import { buildActionClass, readActionClass } from '../questions/templates/safety.ts';
@@ -1495,7 +1495,8 @@ export class Task extends Emitter<TaskEvents> {
   /** The page has no way to the goal here: open the section where it is done ("Post an ad", "Sell", the account). */
   private async enter(sub: Subintent, model: Model): Promise<Outcome> {
     this.entered.add(model.signature);
-    const target = 'the button or link that starts what the goal asks to do or opens the part of the site where it is done (for example "Post an ad", "Sell", "Create", the personal account or the right section), not a search';
+    // No examples in the target: "Post an ad" among them drew JEV to posting when the goal was about an existing ad.
+    const target = 'the button or link that leads toward doing `goal`: it starts it, or opens the section or account area where it is done; not a search';
     // Ways in already taken lead here: an opener clicked again would only close its menu.
     const g = await this.ground(sub, {
       target, kinds: ['link', 'button', 'clickable', 'menuitem', 'tab'], action: 'click', trial: true, exclude: [...this.enteredVia],
@@ -1507,6 +1508,8 @@ export class Task extends Emitter<TaskEvents> {
       return { outcome: 'retry', note: `no way into the goal's section (${ans.type})` };
     }
     const before = this.model!;
+    // A wrong way in is rolled back and this page may be tried again, without it.
+    const failed = (el: ElementNode, why: string) => { this.entered.delete(model.signature); return this.trialFailed(sub, el, before, why); };
     // Links only navigate; buttons get the usual safety check.
     if (!(g.el.kind === 'link' && g.el.href) && await this.guard(g.el, 'open the section for the goal', false) === 'skip') {
       return { outcome: 'skipped', note: 'entry not approved' };
@@ -1514,14 +1517,17 @@ export class Task extends Emitter<TaskEvents> {
     await this.click(g.el);
     await this.settle();
     const after = await this.observe(false);
-    if (g.trial && !hadEffect(before, after, g.el)) return this.trialFailed(sub, g.el, before, 'nothing opened');
-    this.settleGrounding(true);
-    this.enteredVia.add(g.el.sig);
+    if (g.trial && !hadEffect(before, after, g.el)) return failed(g.el, 'nothing opened');
     const opened = `opened ${g.el.ref} "${g.el.name}"`;
     // An opener ("Account ▾") shows a menu: the way in is one of its items.
     const menu = diffModels(before, after).newRegions.map((id) => after.regions.find((r) => r.id === id))
       .find((r) => r && (r.kind === 'popup' || (r.kind === 'nav' && after.elements.get(g.el!.ref)?.states.expanded === true)));
-    if (!menu) return { outcome: 'ok', note: `${opened} to get where the goal is done`, action: { type: 'click', ref: g.el.ref } };
+    if (!menu) {
+      if (!(await this.leadsToGoal(after))) return failed(g.el, 'the page it opened does not lead to the goal');
+      this.enteredVia.add(g.el.sig);
+      this.settleGrounding(true);
+      return { outcome: 'ok', note: `${opened} to get where the goal is done`, action: { type: 'click', ref: g.el.ref } };
+    }
     const item = await this.ground(sub, {
       target: 'the menu item that leads to the part of the site where the goal is done',
       kinds: ['link', 'button', 'clickable', 'menuitem'], regionId: menu.id, action: 'click', trial: true,
@@ -1529,6 +1535,7 @@ export class Task extends Emitter<TaskEvents> {
     if (!item.el) {
       await (await this.page()).press('Escape');
       await this.settle();
+      this.enteredVia.add(g.el.sig);
       return { outcome: 'ok', note: `${opened}; nothing in its menu leads to the goal, closed it` };
     }
     if (!(item.el.kind === 'link' && item.el.href) && await this.guard(item.el, 'open the section for the goal', false) === 'skip') {
@@ -1536,10 +1543,19 @@ export class Task extends Emitter<TaskEvents> {
     }
     await this.click(item.el);
     await this.settle();
-    if (item.trial && !hadEffect(after, await this.observe(false), item.el)) return this.trialFailed(sub, item.el, before, 'the menu item did nothing');
+    const landed = await this.observe(false);
+    if (item.trial && !hadEffect(after, landed, item.el)) return failed(item.el, 'the menu item did nothing');
+    if (!(await this.leadsToGoal(landed))) return failed(item.el, 'the page it opened does not lead to the goal');
+    this.enteredVia.add(g.el.sig);
     this.enteredVia.add(item.el.sig);
     this.settleGrounding(true);
     return { outcome: 'ok', note: `${opened} and chose "${item.el.name}" to get where the goal is done`, action: { type: 'click', ref: item.el.ref } };
+  }
+
+  /** False only when JEV is sure the page does not lead toward the goal. */
+  private async leadsToGoal(model: Model): Promise<boolean> {
+    const res = await runQuestions(this.qctx(), buildLeads(model, this.spec.goal, hintsFor(this.hints), this.budget()));
+    return gateNoul(noulOf(res.answers, 'leads'), this.th().assess.noul) !== 'no';
   }
 
   /**

@@ -45,6 +45,8 @@ interface Script {
   choices?: Array<[RegExp, string]>;
   /** Option pattern for "which option fits the goal" picks. */
   option?: RegExp;
+  /** Noul answers that depend on the request (checked before `nouls`). */
+  noulFn?: (id: string, req: EvaluateRequest) => number | undefined;
 }
 
 /** Scripted JEV: answers by question id with deterministic rules; records every request. */
@@ -101,9 +103,11 @@ function scripted(s: Script): JevClient & { requests: EvaluateRequest[] } {
         out[id] = { type: 'choice', choice: k, probabilities: { [k]: 1 }, confidence: 1 };
       } else if (q.type === 'noul') {
         let v = 0.05;
-        if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same' || id === 'goal_is_search' || id.startsWith('param_here_')) v = 0.95;
+        if (id === 'exists' || id.startsWith('fit_') || id === 'effect' || id === 'same' || id === 'goal_is_search' || id === 'leads' || id.startsWith('param_here_')) v = 0.95;
         if (id === 'goal_reached') v = s.goalReached?.(req) ?? 0.05;
         if (s.nouls?.[id] !== undefined) v = s.nouls[id];
+        const fn = s.noulFn?.(id, req);
+        if (fn !== undefined) v = fn;
         out[id] = { type: 'noul', noul: v };
       }
     }
@@ -310,7 +314,7 @@ describe('Task runner (scripted JEV, real browser)', () => {
     const page = await h.open('account.html');
     const jev = scripted({
       pageKind: () => 'other',
-      targets: [[/starts what the goal asks/i, /Кабинет/], [/menu item that leads/i, /Мои объявления/]],
+      targets: [[/leads toward doing/i, /Кабинет/], [/menu item that leads/i, /Мои объявления/]],
       goalReached: (req) => (String((req.state as any).page?.url ?? '').includes('view=ads') ? 0.95 : 0.05),
     });
     const task = makeTask({ goal: 'Open the list of my ads in the account', params: { phone: { value: '7000000000', about: 'phone number used to sign in' } } }, page, jev);
@@ -322,5 +326,27 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(await page.evaluate('location.search')).toBe('?view=ads');
     const notes = trace.getSteps(task.id).map((st) => (st.notes as { note?: string } | null)?.note ?? '').join(' | ');
     expect(notes).toMatch(/opened e\d+ "Кабинет ▾" and chose "Мои объявления"/);
+  });
+  it('rolls back a way in that opens a page for something else and takes the next one', async () => {
+    const page = await h.open('account.html');
+    const url = (req: EvaluateRequest) => String((req.state as any).page?.url ?? '');
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [[/menu item that leads/i, /Мои объявления/]],
+      // JEV's first pick is the posting button; the page it opens is a new-ad form, not the goal.
+      ranks: [[/leads toward doing/i, [[/Подать объявление/, 0.6], [/Кабинет/, 0.3]]]],
+      noulFn: (id, req) => (id === 'leads' ? (url(req).includes('post.html') ? 0.05 : 0.95) : undefined),
+      goalReached: (req) => (url(req).includes('view=ads') ? 0.95 : 0.05),
+    });
+    const task = makeTask({ goal: 'Open the list of my ads in the account' }, page, jev);
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: 'abort' }), 10); });
+    await task.start();
+    expect(questions).toEqual([]);
+    expect(task.state).toBe('done');
+    const notes = trace.getSteps(task.id).map((st) => (st.notes as { note?: string } | null)?.note ?? '').join(' | ');
+    expect(notes).toMatch(/does not lead to the goal/);
+    expect(notes).toMatch(/"Кабинет ▾" and chose "Мои объявления"/);
+    expect(await page.evaluate('location.search')).toBe('?view=ads');
   });
 });

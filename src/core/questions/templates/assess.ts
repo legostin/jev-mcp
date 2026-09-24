@@ -116,6 +116,17 @@ export function buildAssess(input: AssessInput): QuestionSet {
   return { template: 'assess', state, questions };
 }
 
+/**
+ * After a way in was taken: does the page it opened lead toward the goal? Clear "no" (the new-ad form when the
+ * goal is about an existing ad: 0.12) is rolled back; the right section scores 0.85-0.95.
+ */
+export function buildLeads(model: PageModel, goal: string, hints: string[], budgetTokens: number): QuestionSet {
+  const state = buildState({
+    goal, hints, page: { url: model.url, title: model.title, regions: regionLines(model), elements: elementLines(model, summaryRefs(model)) },
+  }, budgetTokens);
+  return { template: 'assess.leads', state, questions: { leads: { type: 'noul', instructions: 'Does `page` lead toward `goal`: is it where `goal` is done, or a step on the way there?' } } };
+}
+
 export function readAssess(answers: Record<string, Answer>, input: AssessInput): AssessOutput {
   const pk = choiceOf(answers, 'page_kind');
   const overlays: AssessOutput['overlays'] = {};
