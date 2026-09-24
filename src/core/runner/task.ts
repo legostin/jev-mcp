@@ -951,7 +951,8 @@ export class Task extends Emitter<TaskEvents> {
       // A param with no field here usually lives on the results page (filters come with results): search first.
       // Only then look behind "advanced search" / "more filters", once.
       const anyFilled = Object.values(this.status).some((s) => s === 'done');
-      if (this.submitsDone > 0 || !anyFilled) {
+      // Not on a sign-in page: its params come on later pages, there is nothing to reveal there.
+      if ((this.submitsDone > 0 || !anyFilled) && a.pageKind !== 'login') {
         for (const k of Object.keys(this.params)) {
           if ((this.status[k] === 'pending' || this.status[k] === 'typed') && this.absentOn[k] === model.signature && !this.revealTried.has(k)) {
             return { type: 'reveal', key: k };
@@ -1496,6 +1497,8 @@ export class Task extends Emitter<TaskEvents> {
       return ids;
     }));
     const paramRefs = new Set(Object.values(this.paramRefs));
+    // A section where a param's own field sits (a year list next to quick year buttons) is answered already.
+    const paramRegions = new Set([...paramRefs].map((ref) => model.elements.get(ref)?.regionId).filter(Boolean));
     const els = [...model.elements.values()].filter((e) => e.visible && !e.states.disabled);
     for (const e of els) {
       if ((e.kind === 'select' || e.kind === 'combobox') && e.states.required && isEmptyField(e) && !paramRefs.has(e.ref)) {
@@ -1511,12 +1514,12 @@ export class Task extends Emitter<TaskEvents> {
     }
     for (const [group, radios] of groups) {
       // A group a param already answered (its radio is the param's field) is not "empty".
-      if (this.anyGroups.has(group) || radios.some((r) => r.states.checked || paramRefs.has(r.ref))) continue;
+      if (this.anyGroups.has(group) || radios.some((r) => r.states.checked || paramRefs.has(r.ref) || paramRegions.has(r.regionId))) continue;
       return { ref: radios[0].ref, group };
     }
     // Option buttons under a heading ("Двигатель: [Бензиновый] [Гибридный]"), none chosen: a choice group too.
     for (const r of model.regions) {
-      if (r.kind !== 'section' || !r.label || !formIds.has(r.id)) continue;
+      if (r.kind !== 'section' || !r.label || !formIds.has(r.id) || paramRegions.has(r.id)) continue;
       const group = `chips:${r.sig}`;
       if (this.anyGroups.has(group)) continue;
       const own = r.refs.map((ref) => model.elements.get(ref)).filter((e): e is ElementNode => !!e && e.visible);
