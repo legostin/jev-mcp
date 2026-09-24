@@ -17,6 +17,8 @@ export interface StateParts {
   page?: { url?: string; title?: string; lang?: string; regions?: Record<string, string>; elements?: Record<string, string>; [k: string]: Json | undefined };
   candidates?: Record<string, string>;
   recent?: string[];
+  /** The task's working memory slice (facts, pages passed, what did not work). */
+  memory?: Record<string, Json>;
   extra?: Record<string, Json>;
 }
 
@@ -64,6 +66,7 @@ export function buildState(parts: StateParts, budgetTokens: number): Json {
     }
     if (p.candidates) s.candidates = p.candidates;
     if (p.recent?.length) s.recent_steps = p.recent;
+    if (p.memory && Object.keys(p.memory).length) s.task_memory = p.memory;
     if (p.extra) Object.assign(s, p.extra);
     return s;
   };

@@ -383,4 +383,25 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(await page.evaluate('document.getElementById("done").textContent')).toMatch(/оплачено сохранённой картой/);
     expect(task.state).toBe('done');
   });
+  it('drops sign-in params once a page shows the user signed in, and never looks for their fields again', async () => {
+    const page = await h.open('account.html');
+    const jev = scripted({
+      pageKind: () => 'other',
+      targets: [[/leads toward doing/i, /Кабинет/], [/menu item that leads/i, /Мои объявления/]],
+      nouls: { signed_in: 0.95 },
+      goalReached: (req) => (String((req.state as any).page?.url ?? '').includes('view=ads') ? 0.95 : 0.05),
+    });
+    const task = makeTask({
+      goal: 'Open the list of my ads in the account',
+      params: { phone: { value: '7000000000', about: 'phone number used to sign in' }, password: { value: 'pw-secret-1', about: 'account password', secret: true } },
+    }, page, jev);
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); setTimeout(() => task.answer(q.question_id, { type: 'abort' }), 10); });
+    await task.start();
+    const steps = trace.getSteps(task.id).map((st) => st.subintent ?? '');
+    expect(questions).toEqual([]);
+    expect(task.state).toBe('done');
+    expect(steps.some((st) => /phone|password/.test(st))).toBe(false);
+    expect(task.statusView().progress).toEqual({ phone: 'not_needed', password: 'not_needed' });
+  });
 });

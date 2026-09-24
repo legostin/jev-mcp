@@ -59,6 +59,8 @@ export interface GroundContext {
   step?: StepCard;
   params?: Record<string, ParamSpec>;
   hints?: string[];
+  /** Working memory for questions about where to go (entering a section); not for one field. */
+  memory?: Record<string, Json>;
   budgetTokens: number;
 }
 
@@ -132,7 +134,7 @@ export async function groundByIntent(
   let cost = 0;
   const all = candidateElements(model, intent);
   const empty: GroundResult = { ref: null, confidence: 1, exists: 0, candidates: [], ranked: [], stage: 'none', decision: 'none', callIds, costUsd: 0 };
-  let ctxParts = { goal: gctx.goal, step: gctx.step, params: gctx.params, hints: gctx.hints, intent: intentState(intent) };
+  let ctxParts = { goal: gctx.goal, step: gctx.step, params: gctx.params, hints: gctx.hints, memory: gctx.memory, intent: intentState(intent) };
   if (!all.length) return empty;
   const q = tokens(`${intent.target} ${gctx.goal ?? ''}`);
   const scored = all

@@ -25,6 +25,8 @@ import { estimateTokens } from '../util/tokens.ts';
 import { inRange } from '../extract/dates.ts';
 import { deterministicRisk, domainAllowed } from '../safety/rules.ts';
 import { maskSecrets, secretValues } from '../safety/secrets.ts';
+import { isSignInParam, Journal, type JournalData } from './journal.ts';
+import { cleanText } from '../perception/naming.ts';
 import { thresholdsFor, hostOf } from './thresholds.ts';
 import { dateRange, fieldHoldsValue, isEmptyField, isValueLabel, normalizeText, paramKind, requiredEmptyFields, showsValue } from './progress.ts';
 import { Emitter } from '../util/events.ts';
@@ -112,6 +114,7 @@ export interface TaskCheckpoint {
   liveConfidence?: ConfidenceConfig;
   /** Limits the agent already extended, idle time so far and when the checkpoint was saved (added later: optional). */
   maxStepsBonus?: number; budgetBonus?: number; idleMs?: number; savedAt?: number;
+  journal?: JournalData;
 }
 
 type TaskEvents = {
@@ -197,6 +200,8 @@ export class Task extends Emitter<TaskEvents> {
   private goesOn = new Map<string, boolean>();
   /** Choice groups already given "any" value. */
   private anyGroups = new Set<string>();
+  /** Working memory: facts, pages passed, ways that did not work. */
+  private journal = new Journal();
   /** A field search started ahead (see startPrefetch). */
   private prefetch: { key: string; promise: Promise<GroundResult | null> } | null = null;
   /** The risk question for the one obvious submit button, asked while the button is being grounded. */
@@ -414,6 +419,7 @@ export class Task extends Emitter<TaskEvents> {
     t.maxStepsBonus = cp.maxStepsBonus ?? 0;
     t.budgetBonus = cp.budgetBonus ?? 0;
     t.idleMs = cp.idleMs ?? 0;
+    t.journal = Journal.from(cp.journal);
     // The daemon was down since the last checkpoint: that time is idle too, until the task is resumed.
     t.idleSince = cp.savedAt ?? Date.now();
     t.state = 'interrupted';
@@ -429,6 +435,7 @@ export class Task extends Emitter<TaskEvents> {
       status: { ...this.status }, hints: this.hints, submitsDone: this.submitsDone, dirty: this.dirty, sortTried: this.sortTried,
       sortedBy: this.sortedBy, url: this.model?.url ?? this.resumeUrl, driver: this.spec.driver ?? null, liveConfidence: this.liveConfidence,
       maxStepsBonus: this.maxStepsBonus, budgetBonus: this.budgetBonus, idleMs: this.idleMs, savedAt: this.now(),
+      journal: this.journal.toJSON(),
     };
   }
 
@@ -623,6 +630,26 @@ export class Task extends Emitter<TaskEvents> {
     }
   }
 
+  /**
+   * Sign-in details are only needed until the user is signed in: once a page shows that, they stop being pending
+   * (no more looking for a phone field on every page). A sign-in form later brings them back.
+   */
+  private noteSignIn(a: AssessOutput): void {
+    const th = this.th();
+    const keys = Object.keys(this.params).filter((k) => isSignInParam(k, this.params[k].about));
+    if (!keys.length) return;
+    if (a.pageKind === 'login' && a.pageKindConfidence >= th.assess.choice.act) {
+      for (const k of keys) if (this.status[k] === 'not_needed') this.status[k] = 'pending';
+      this.journal.dropFact('signed_in');
+      return;
+    }
+    if (a.signedIn !== undefined && gateNoul(a.signedIn, th.assess.noul) === 'yes') {
+      for (const k of keys) if (this.status[k] === 'pending') this.status[k] = 'not_needed';
+      this.journal.addFact('signed_in', 'The user is already signed in: sign-in details are not needed.', this.stepIdx);
+      this.note(`already signed in: ${keys.join(', ')} not needed`);
+    }
+  }
+
   /** Everything a grounding question depends on, and a key that is equal only for the same question. */
   private groundArgs(sub: Subintent, intent: Intent, model: Model) {
     const th = this.th();
@@ -630,8 +657,10 @@ export class Task extends Emitter<TaskEvents> {
     const trial = !!intent.trial && th.trial.enabled && tried.length < th.trial.tries;
     const full: Intent = { ...intent, trial, exclude: [...(intent.exclude ?? []), ...tried.map((t) => t.sig)] };
     const card = this.card(sub);
-    const gctx = { goal: this.spec.goal, step: card, hints: hintsFor(this.hints, card), budgetTokens: this.budget() };
-    return { th, tried, trial, card, intent: full, gctx, key: JSON.stringify([model.signature, full, gctx.hints, th.ground]) };
+    // Where to go is decided with the working memory; one field is found without it.
+    const memory = sub.type === 'enter' ? this.journal.forQuestion() : undefined;
+    const gctx = { goal: this.spec.goal, step: card, hints: hintsFor(this.hints, card), memory, budgetTokens: this.budget() };
+    return { th, tried, trial, card, intent: full, gctx, key: JSON.stringify([model.signature, full, gctx.hints, memory, th.ground]) };
   }
 
   /**
@@ -741,6 +770,7 @@ export class Task extends Emitter<TaskEvents> {
    * the element as rejected for this step and let the next iteration ground again without it.
    */
   private async trialFailed(sub: Subintent, el: ElementNode, before: Model, why: string): Promise<Outcome> {
+    this.journal.deadEnd(before.url, cleanText(el.name || el.text || el.ref, 60), why);
     const page = await this.page();
     let wentBack = false;
     for (let i = 0; i < 3; i++) {
@@ -826,6 +856,7 @@ export class Task extends Emitter<TaskEvents> {
       return;
     }
 
+    this.journal.visit(model.url, model.title);
     this.startPrefetch(model);
     const t1 = this.now();
     const assess = await this.assess(model);
@@ -877,6 +908,8 @@ export class Task extends Emitter<TaskEvents> {
     } else if (out.outcome === 'ok') this.failures.set(subLabel, 0);
     this.note(out.note);
     const after = this.deps.port.lastModel();
+    const ref = (out.action as { ref?: string } | undefined)?.ref;
+    if (after && after.url !== model.url) this.journal.visit(after.url, after.title, ref ? cleanText(model.elements.get(ref)?.name ?? '', 60) || undefined : undefined);
     let screenshot: string | undefined;
     if (this.deps.getConfig().trace.screenshots) {
       try { screenshot = this.deps.trace.saveBlob(this.id, `step-${this.stepIdx}.png`, await page.screenshot()); } catch { /* optional */ }
@@ -896,8 +929,10 @@ export class Task extends Emitter<TaskEvents> {
     // Dialogs our own click opened get "can the goal go on from here?" in the same call.
     const goesOnRegions = model.regions.filter((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking
       && this.openedByUs.has(r.sig) && !this.goesOn.has(r.sig)).map((r) => r.id);
+    const signInPending = Object.keys(this.params).some((k) => this.status[k] === 'pending' && isSignInParam(k, this.params[k].about));
     const cached = this.assessCache?.sig === model.signature ? this.assessCache.out : null;
-    if (cached && (!opts.leads || cached.leads !== undefined) && goesOnRegions.every((id) => cached.goesOn[id] !== undefined)) return cached;
+    if (cached && (!opts.leads || cached.leads !== undefined) && (!signInPending || cached.signedIn !== undefined)
+      && goesOnRegions.every((id) => cached.goesOn[id] !== undefined)) return cached;
     const overlays = [
       ...model.regions.filter((r) => (r.kind === 'overlay' || r.kind === 'dialog') && r.blocking),
       ...model.regions.filter((r) => r.kind === 'overlay' && !r.blocking && !this.dismissed.has(r.sig) && this.regionVisible(model, r)).slice(0, 2),
@@ -916,6 +951,8 @@ export class Task extends Emitter<TaskEvents> {
         && [...model.elements.values()].some((e) => e.visible && e.interactive && ['textbox', 'combobox', 'select', 'radio'].includes(e.kind)),
       checkLeads: opts.leads,
       goesOnRegions,
+      checkSignedIn: signInPending,
+      facts: this.journal.facts.map((f) => f.text),
     };
     const res = await runQuestions(this.qctx(), buildAssess(input));
     const out = readAssess(res.answers, input);
@@ -959,6 +996,7 @@ export class Task extends Emitter<TaskEvents> {
   private async chooseSubintent(model: Model, a: AssessOutput): Promise<Subintent> {
     const th = this.th();
     const yes = (v: number, kind: DecisionKind = 'assess') => gateNoul(v, th[kind].noul) === 'yes';
+    this.noteSignIn(a);
     // Results reached without our submit (an autocomplete pick or a filter link started the search) count as one.
     if (a.pageKind === 'results_list' && this.submitsDone === 0) {
       this.submitsDone = 1;
@@ -1036,7 +1074,8 @@ export class Task extends Emitter<TaskEvents> {
     if (!this.spec.result && yes(a.goalReached) && !goalDialog && Object.entries(this.status).every(([k, s]) => s !== 'pending' || this.absentOn[k] !== undefined)) {
       return { type: 'done', reason: 'goal reached' };
     }
-    const onForm = ['search_form', 'login', 'other', 'item_details', 'checkout'].includes(a.pageKind) || pendingKeys.length > 0;
+    // A dialog of the goal is worked through whatever the page under it is (a list, a results page).
+    const onForm = ['search_form', 'login', 'other', 'item_details', 'checkout'].includes(a.pageKind) || pendingKeys.length > 0 || goalDialog;
     if (onForm) {
       for (const k of Object.keys(this.params)) {
         const s = this.status[k];
@@ -1058,7 +1097,9 @@ export class Task extends Emitter<TaskEvents> {
       // Not on a sign-in page: its params come on later pages, there is nothing to reveal there.
       if ((this.submitsDone > 0 || !anyFilled) && a.pageKind !== 'login') {
         for (const k of Object.keys(this.params)) {
-          if ((this.status[k] === 'pending' || this.status[k] === 'typed') && this.absentOn[k] === model.signature && !this.revealTried.has(k)) {
+          // Sign-in details are entered on a sign-in page, never hidden behind "more filters".
+          if ((this.status[k] === 'pending' || this.status[k] === 'typed') && this.absentOn[k] === model.signature && !this.revealTried.has(k)
+            && !isSignInParam(k, this.params[k].about)) {
             return { type: 'reveal', key: k };
           }
         }
@@ -1109,7 +1150,7 @@ export class Task extends Emitter<TaskEvents> {
     options.push({ id: 'go_back', description: 'Go back to the previous page.' });
     options.push({ id: 'wait', description: 'Wait for the page to finish loading or updating.' });
     if (!this.spec.result) options.push({ id: 'done', description: 'The goal is already achieved; stop.' });
-    const res = await runQuestions(this.qctx(), buildDecide({ model, goal: this.spec.goal, params: this.params, progress: this.status, hints: hintsFor(this.hints), recent: this.recent, options, budgetTokens: this.budget() }));
+    const res = await runQuestions(this.qctx(), buildDecide({ model, goal: this.spec.goal, params: this.params, progress: this.status, hints: hintsFor(this.hints), recent: this.recent, memory: this.journal.forQuestion(), options, budgetTokens: this.budget() }));
     const choice = readDecide(res.answers);
     let pick = choice.choice;
     if (gateChoice(choice, this.th().subintent.choice) !== 'act') {

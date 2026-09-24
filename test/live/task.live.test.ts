@@ -136,6 +136,7 @@ describe.skipIf(!live)('JEV task end-to-end on the flights fixture', () => {
     const trace = await client.call('task.trace', { task_id: created.task_id });
     for (const s of trace.steps) console.log(`step ${s.idx} ${s.subintent} ${s.outcome} ${s.notes?.note ?? ''}`);
     for (const q of questions) console.log(`question ${q.kind}: ${q.summary}`);
+    for (const s of trace.steps) for (const c of s.calls ?? []) for (const [k, v] of Object.entries(c.answers ?? {})) if (/^(signed_in|goes_on|overlay_kind)/.test(k)) console.log(`ans ${s.idx} ${k} ${JSON.stringify((v as any).noul ?? (v as any).probabilities)}`);
     expect(result.status).toBe('done');
     const notes = trace.steps.map((s: any) => s.notes?.note ?? '').join(' | ');
     expect(notes).toMatch(/Сохранённая карта/);

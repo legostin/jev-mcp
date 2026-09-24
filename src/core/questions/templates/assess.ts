@@ -48,6 +48,10 @@ export interface AssessInput {
   budgetTokens: number;
   /** A way in was just taken: does this page lead toward the goal? (asked in the same call) */
   checkLeads?: boolean;
+  /** Sign-in params are still pending: is the user already signed in? */
+  checkSignedIn?: boolean;
+  /** Facts the task established (working memory). */
+  facts?: string[];
   /** Dialogs the task's own click opened that may be a step of the goal: can the goal go on from them? */
   goesOnRegions?: string[];
 }
@@ -68,6 +72,8 @@ export interface AssessOutput {
   paramHere: Record<string, number>;
   /** Asked with `checkLeads` only. */
   leads?: number;
+  /** Asked with `checkSignedIn` only. */
+  signedIn?: number;
   /** Per region in `goesOnRegions`. */
   goesOn: Record<string, number>;
 }
@@ -82,6 +88,12 @@ export const LEADS_QUESTION = 'Does `page` lead toward `goal`: is it where `goal
  * A dialog the task's own click opened that JEV called "other" or "promo": can the goal go on from it? A price
  * notice with "Continue to payment" scores 0.55-0.6, a newsletter offer 0.05-0.15.
  */
+/**
+ * Sign-in details stop being pending once the page shows the user signed in. Both sides spelled out: an account
+ * page scores 0.85-0.96, a guest page, a sign-in form or a plain search page 0.02-0.13 (a looser wording: 0.63-0.73).
+ */
+export const SIGNED_IN_QUESTION = 'Is the user signed in on `page`? Signed in: the page offers the user\'s own account (an account or cabinet menu, "My ads", "My orders", messages, balance, the user\'s name, "Log out") and no "Sign in" or "Log in" link. Not signed in: a "Sign in" / "Log in" link or form is shown.';
+
 export const goesOnQuestion = (regionId: string) =>
   `Can \`goal\` go on from \`page.regions.${regionId}\`: does it offer a way to pay, continue or confirm what \`goal\` asks for?`;
 
@@ -122,6 +134,7 @@ export function buildAssess(input: AssessInput): QuestionSet {
     questions[`param_reflected_${k}`] = { type: 'noul', instructions: `Is \`params.${k}.value\` currently entered or selected on the page?` };
   }
   if (input.checkLeads) questions.leads = { type: 'noul', instructions: LEADS_QUESTION };
+  if (input.checkSignedIn) questions.signed_in = { type: 'noul', instructions: SIGNED_IN_QUESTION };
   for (const id of input.goesOnRegions ?? []) questions[`goes_on_${id}`] = { type: 'noul', instructions: goesOnQuestion(id) };
   const required: Record<string, string> = {};
   for (const e of input.requiredEmpty.slice(0, 8)) {
@@ -133,6 +146,7 @@ export function buildAssess(input: AssessInput): QuestionSet {
   }
   const state = buildState({
     goal: input.goal, params: input.params, hints: input.hints, progress: input.progress,
+    memory: input.facts?.length ? { facts: input.facts } : undefined,
     page: { url: model.url, title: model.title, regions: regionLines(model), elements: elementLines(model, summaryRefs(model)) },
     extra: Object.keys(required).length ? { required_fields: required as unknown as Json } : undefined,
   }, input.budgetTokens);
@@ -164,6 +178,7 @@ export function readAssess(answers: Record<string, Answer>, input: AssessInput):
     formServesGoal: input.checkFormFit ? 1 - noulOf(answers, 'form_is_search') * (1 - noulOf(answers, 'goal_is_search')) : 1,
     paramHere: Object.fromEntries((input.pendingParams ?? []).map((k) => [k, noulOf(answers, `param_here_${k}`)])),
     leads: input.checkLeads ? noulOf(answers, 'leads') : undefined,
+    signedIn: input.checkSignedIn ? noulOf(answers, 'signed_in') : undefined,
     goesOn: Object.fromEntries((input.goesOnRegions ?? []).map((id) => [id, noulOf(answers, `goes_on_${id}`)])),
   };
 }

@@ -102,4 +102,5 @@ export interface TaskResult {
 
 export interface StepSummary { idx: number; subintent: string; outcome: string; note: string; url: string }
 
-export type ParamStatus = 'pending' | 'typed' | 'done' | 'absent' | 'skipped';
+/** `not_needed`: the path turned out not to need it (sign-in details when already signed in). */
+export type ParamStatus = 'pending' | 'typed' | 'done' | 'absent' | 'skipped' | 'not_needed';

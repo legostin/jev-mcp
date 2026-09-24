@@ -40,6 +40,11 @@
 const q = new URLSearchParams(location.search);
 const main = document.getElementById('main');
 const cab = document.getElementById('cab');
+// A visitor who is not signed in sees "Войти" instead of the account links (?guest=1).
+if (q.get('guest')) {
+  for (const el of [cab, ...document.querySelectorAll('header a')].filter((e) => /Избранное|Сообщения/.test(e.textContent) || e === cab)) el.remove();
+  document.querySelector('header span').insertAdjacentHTML('afterend', '<a href="login.html">Войти</a>');
+}
 if (q.get('notice')) for (const a of document.querySelectorAll('a[href^="account.html"]')) a.href += (a.href.includes('?') ? '&' : '?') + 'notice=1';
 cab.onclick = () => {
   const m = document.getElementById('menu');

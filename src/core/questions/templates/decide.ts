@@ -14,6 +14,7 @@ export interface DecideInput {
   progress: Record<string, string>;
   hints: string[];
   recent: string[];
+  memory?: Record<string, Json>;
   options: SubintentOption[];
   budgetTokens: number;
 }
@@ -28,7 +29,7 @@ export function buildDecide(input: DecideInput): QuestionSet {
     next: { type: 'choice', instructions: 'Which step in `steps` should be done next to accomplish `goal`, given `progress` and `recent_steps`?', criteria },
   };
   const state = buildState({
-    goal: input.goal, params: input.params, hints: input.hints, progress: input.progress, recent: input.recent.slice(-6),
+    goal: input.goal, params: input.params, hints: input.hints, progress: input.progress, recent: input.recent.slice(-6), memory: input.memory,
     page: { url: input.model.url, title: input.model.title, regions: regionLines(input.model), elements: elementLines(input.model, summaryRefs(input.model, 80)) },
     extra: { steps: steps as unknown as Json },
   }, input.budgetTokens);
