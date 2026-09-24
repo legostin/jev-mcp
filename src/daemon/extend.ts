@@ -100,7 +100,7 @@ export async function registerStage2(handle: DaemonHandle, opts: { httpPort?: nu
   handle.endpoint.extensionPort = port;
   writeEndpoint(handle.endpoint);
   handle.busy.push(() => tasks.busy());
-  handle.onClose(async () => { tasks.cancelAll(); bridge.close(); await http.close(); });
+  handle.onClose(async () => { tasks.suspendAll(); bridge.close(); await http.close(); });
   ctx.extras.tasks = () => tasks.tasks.size;
   ctx.extras.ui = () => http.url('/');
   log.info(`debug UI on ${http.url('/')} (extension endpoint ws://127.0.0.1:${port}/ext)`);

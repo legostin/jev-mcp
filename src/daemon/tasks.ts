@@ -285,7 +285,8 @@ export class TaskManager {
     rpc.register('questions.pending', async (_p, conn) => ({ questions: this.pending(session(conn)) }));
   }
 
-  cancelAll(): void {
-    for (const t of this.tasks.values()) if (!FINAL_STATES.has(t.state)) t.cancel('daemon stopping');
+  /** The daemon is stopping: running tasks become "interrupted" and come back on the next start. */
+  suspendAll(): void {
+    for (const t of this.tasks.values()) if (!FINAL_STATES.has(t.state)) t.suspend('the daemon stopped');
   }
 }

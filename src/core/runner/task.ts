@@ -274,6 +274,20 @@ export class Task extends Emitter<TaskEvents> {
     if (this.state === 'interrupted' || this.state === 'queued') this.finish('cancelled', undefined, reason);
   }
 
+  /** The daemon is stopping: stop working but stay resumable (state "interrupted", checkpoint kept). */
+  suspend(reason = 'the daemon stopped'): void {
+    if (this.finished) return;
+    this.suspended = true;
+    this.abort.abort();
+    this.pending?.reject(new Interrupted(reason));
+    this.pending = null;
+    this.pausedWaiter?.resolve();
+    this.pausedWaiter = null;
+    this.setState('interrupted', reason);
+  }
+
+  private suspended = false;
+
   update(patch: { params?: Record<string, ParamSpec>; hints?: string[]; confidence?: ConfidenceConfig; policy?: Partial<TaskSpec['policy']> }): void {
     if (patch.params) for (const [k, v] of Object.entries(patch.params)) { this.params[k] = v; this.status[k] = 'pending'; delete this.absentOn[k]; }
     if (patch.hints) this.hints.push(...patch.hints.map((text) => ({ text, source: 'task' as const })));
@@ -315,6 +329,7 @@ export class Task extends Emitter<TaskEvents> {
         await this.step();
       }
     } catch (e) {
+      if (this.suspended) { this.setState('interrupted', 'the daemon stopped'); return; }
       if (e instanceof Cancelled || this.abort.signal.aborted) this.finish('cancelled', undefined, (e as Error).message);
       else if (e instanceof Interrupted) { this.setState('interrupted', e.message); log.warn(`task ${this.id} interrupted: ${e.message}`); }
       else {
