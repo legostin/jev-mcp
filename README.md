@@ -163,6 +163,14 @@ While jev controls a tab, Chrome shows a "JEV Browser started debugging this bro
 
 The extension talks only to `ws://127.0.0.1:47913` (`driver.extensionPort`; the side panel has a port field if you change it). Tasks on extension tabs pause while the extension is disconnected and resume when it reconnects.
 
+To keep working in another app while jev uses the extension, turn on background mode:
+
+```bash
+jev settings set driver.background true
+```
+
+New tabs then open inactive and selecting a tab no longer brings the Chrome window to the front; CDP focus emulation lets the background page accept input. It is off by default and applies only to the extension. Tabs jev is already attached to get focus emulation after `jev stop` (run it while no task is running). Windows that a site opens itself and browser dialogs can still ask for attention.
+
 ### Update or remove
 
 ```bash

@@ -106,6 +106,22 @@ describe.skipIf(!cft || !existsSync(join(extDir, 'worker.js')))('Chrome extensio
     expect(obs.text).toContain('Cardholder name');
   });
 
+  it('works in an inactive tab with focus emulation in background mode', async () => {
+    await client.call('settings.set', { path: 'driver.background', value: true });
+    try {
+      const url = `${fixtures.url('counter.html')}?background=1`;
+      const opened = await client.call('tabs.open', { url, driver: 'extension' });
+      await client.call('tabs.select', { tab: opened.tab });
+      const [tab] = await panel.eval(`chrome.tabs.query({ url: ${JSON.stringify(url)} })`);
+      expect(tab.active).toBe(false);
+      expect((await client.call('page.evaluate', { tab: opened.tab, expression: 'document.hasFocus()' })).value).toBe(true);
+      const typed = await client.call('page.act', { tab: opened.tab, action: 'type', intent: 'the name input', value: 'Kim' });
+      expect(typed.diff).toContain('value="Kim"');
+    } finally {
+      await client.call('settings.set', { path: 'driver.background', value: false });
+    }
+  });
+
   it('pauses extension tasks while the extension is disconnected and resumes after', async () => {
     const opened = await client.call('tabs.open', { url: fixtures.url('login.html'), driver: 'extension' });
     const created = await client.call('task.create', { goal: 'Sign in', tab: opened.tab, params: { email: { value: 'a@b.co', about: 'account email' } }, policy: { confidence: { act: 1, escalate: 1 } } });

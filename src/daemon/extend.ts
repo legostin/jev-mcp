@@ -21,7 +21,7 @@ export async function registerStage2(handle: DaemonHandle, opts: { httpPort?: nu
   const tasks = new TaskManager(ctx, rpc, memory);
   tasks.register();
   tasks.restoreUnfinished();
-  const bridge = new ExtensionBridge(() => ctx.getConfig().driver.extensionIds);
+  const bridge = new ExtensionBridge(() => ctx.getConfig().driver.extensionIds, () => ctx.getConfig().driver.background);
   ctx.browsers.setExtensionDriver(bridge.driver, () => bridge.everPaired);
   const http = new HttpServer({ ctx, tasks, memory, bridge });
   const port = await http.listen(opts.httpPort ?? (process.env.JEV_HTTP_PORT ? Number(process.env.JEV_HTTP_PORT) : ctx.getConfig().driver.extensionPort));
