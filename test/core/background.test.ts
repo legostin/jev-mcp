@@ -1,11 +1,34 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ExtensionBridge } from '../../src/daemon/ext-bridge.ts';
+import { CdpDispatcher, type CdpConnection } from '../../src/core/cdp/connection.ts';
+import type { BrowserDriver } from '../../src/core/cdp/driver.ts';
+import { PageSession } from '../../src/core/cdp/page.ts';
 
 function fixture(background: boolean) {
   const bridge = new ExtensionBridge(() => [], () => background);
   const call = vi.spyOn(bridge, 'call').mockImplementation(async (method) =>
     method === 'openTab' ? { tabId: 17, url: 'about:blank', title: '', active: !background } : {});
   return { bridge, call };
+}
+
+/** A page behind a driver in or out of background mode; commands are recorded and `fail` makes chosen ones reject. */
+function fakePage(background: () => boolean, fail: (method: string) => boolean = () => false) {
+  const d = new CdpDispatcher();
+  const sent: { method: string; params: any; sessionId?: string }[] = [];
+  const conn: CdpConnection = {
+    get closed() { return d.closed; },
+    send: async (method: string, params: Record<string, unknown> = {}, sessionId?: string) => {
+      sent.push({ method, params, sessionId });
+      if (fail(method)) throw new Error(`${method} failed`);
+      return (method === 'Page.getFrameTree' ? { frameTree: { frame: { id: 'f1', url: 'about:blank' } } } : {}) as any;
+    },
+    on: (l) => d.on(l),
+    onClose: (l) => d.onClose(l),
+    close: async () => d.shutdown('closed'),
+  };
+  const driver = { kind: 'extension', get background() { return background(); }, attach: async () => ({ conn }) } as unknown as BrowserDriver;
+  const focus = () => sent.filter((s) => s.method === 'Emulation.setFocusEmulationEnabled').map((s) => ({ enabled: s.params.enabled, sessionId: s.sessionId }));
+  return { d, driver, focus };
 }
 
 describe('extension background mode', () => {
@@ -16,12 +39,10 @@ describe('extension background mode', () => {
     expect(call).toHaveBeenCalledWith('openTab', { url: 'about:blank', active: false });
     expect(call.mock.calls.some(([method]) => method === 'activateTab')).toBe(false);
   });
-  it('emulates focus on attachment so pages work while the user types elsewhere', async () => {
+  it('still shows a tab to the person when asked to', async () => {
     const { bridge, call } = fixture(true);
-    await bridge.driver.attach('17');
-    expect(call.mock.calls.some(([method, params]) => method === 'send' &&
-      (params as any).method === 'Emulation.setFocusEmulationEnabled' &&
-      (params as any).params.enabled === true)).toBe(true);
+    await bridge.driver.activateTab('17', { show: true });
+    expect(call).toHaveBeenCalledWith('activateTab', { tabId: 17 });
   });
   it('preserves foreground behaviour when background mode is disabled', async () => {
     const { bridge, call } = fixture(false);
@@ -32,38 +53,50 @@ describe('extension background mode', () => {
     expect(call).toHaveBeenCalledWith('activateTab', { tabId: 17 });
     expect(call.mock.calls.some(([method]) => method === 'send')).toBe(false);
   });
-  it('detaches after focus setup fails and allows attachment to be retried', async () => {
-    const { bridge, call } = fixture(true);
-    call.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('focus setup failed'));
-    await expect(bridge.driver.attach('17')).rejects.toThrow('focus setup failed');
-    expect(call).toHaveBeenCalledWith('detach', { tabId: 17 });
-    expect(bridge.driver.tabs.has(17)).toBe(false);
-    await bridge.driver.attach('17');
-    expect(bridge.driver.tabs.has(17)).toBe(true);
-  });
-  it('shares one attachment between concurrent callers', async () => {
-    const { bridge, call } = fixture(true);
-    const [a, b] = await Promise.all([bridge.driver.attach('17'), bridge.driver.attach('17')]);
-    expect(a.conn).toBe(b.conn);
-    expect(call.mock.calls.filter(([method]) => method === 'attach')).toHaveLength(1);
-  });
-  it('reports one focus failure to concurrent callers and detaches once', async () => {
-    const { bridge, call } = fixture(true);
-    call.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('focus setup failed'));
-    const results = await Promise.allSettled([bridge.driver.attach('17'), bridge.driver.attach('17')]);
-    expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
-    expect(call.mock.calls.filter(([method]) => method === 'detach')).toHaveLength(1);
-    expect(bridge.driver.tabs.has(17)).toBe(false);
-  });
   it('reads the setting on every call, so toggling it needs no restart for new tabs', async () => {
     let background = false;
     const bridge = new ExtensionBridge(() => [], () => background);
     const call = vi.spyOn(bridge, 'call').mockResolvedValue({ tabId: 17, url: 'about:blank', title: '' });
     await bridge.driver.openTab();
+    expect(bridge.driver.background).toBe(false);
     background = true;
     await bridge.driver.openTab();
     await bridge.driver.activateTab('17');
+    expect(bridge.driver.background).toBe(true);
     expect(call.mock.calls.filter(([method]) => method === 'openTab').map(([, params]) => (params as any).active)).toEqual([true, false]);
     expect(call.mock.calls.some(([method]) => method === 'activateTab')).toBe(false);
+  });
+});
+
+describe('focus emulation in background mode', () => {
+  it('is turned on for the page and for cross-origin iframes', async () => {
+    const { d, driver, focus } = fakePage(() => true);
+    await PageSession.open(driver, '17');
+    d.handleMessage({ method: 'Target.attachedToTarget', params: { sessionId: 'c1', targetInfo: { type: 'iframe', targetId: 'i1', url: 'https://pay.example/' } } });
+    await vi.waitFor(() => expect(focus()).toEqual([{ enabled: true, sessionId: undefined }, { enabled: true, sessionId: 'c1' }]));
+  });
+  it('is not sent outside background mode', async () => {
+    const { driver, focus } = fakePage(() => false);
+    await PageSession.open(driver, '17');
+    expect(focus()).toEqual([]);
+  });
+  it('does not stop the page from working when the browser rejects it', async () => {
+    const { driver, focus } = fakePage(() => true, (m) => m === 'Emulation.setFocusEmulationEnabled');
+    const page = await PageSession.open(driver, '17');
+    expect(page.closed).toBe(false);
+    expect(focus()).toEqual([{ enabled: true, sessionId: undefined }]);
+  });
+  it('follows the setting on pages that are already open', async () => {
+    let background = false;
+    const { d, driver, focus } = fakePage(() => background);
+    const page = await PageSession.open(driver, '17');
+    d.handleMessage({ method: 'Target.attachedToTarget', params: { sessionId: 'c1', targetInfo: { type: 'iframe', targetId: 'i1', url: 'https://pay.example/' } } });
+    background = true;
+    await page.syncFocusEmulation();
+    await page.syncFocusEmulation();
+    expect(focus()).toEqual([{ enabled: true, sessionId: undefined }, { enabled: true, sessionId: 'c1' }]);
+    background = false;
+    await page.syncFocusEmulation();
+    expect(focus().slice(2)).toEqual([{ enabled: false, sessionId: undefined }, { enabled: false, sessionId: 'c1' }]);
   });
 });

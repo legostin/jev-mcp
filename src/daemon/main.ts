@@ -50,7 +50,7 @@ export async function startDaemon(opts: {
 
   const ctx: DaemonContext = {
     getConfig: () => cfg,
-    setConfig: (next) => { cfg = next; },
+    setConfig: (next) => { cfg = next; browsers.syncFocusEmulation(); },
     jev, trace, browsers, version: VERSION, startedAt: Date.now(),
     sessionOf: (conn: Connection) => {
       if (conn.sessionId) return conn.sessionId;

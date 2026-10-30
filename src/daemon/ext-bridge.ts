@@ -46,49 +46,33 @@ class ExtensionDriver implements BrowserDriver {
   readonly kind = 'extension' as const;
   private readonly bridge: ExtensionBridge;
   readonly tabs = new Map<number, ExtTabConnection>();
-  private readonly attaching = new Map<number, Promise<{ conn: CdpConnection }>>();
   private disconnectListeners = new Set<() => void>();
   readonly createdListeners = new Set<(tab: { id: string; openerId?: string; url: string }) => void>();
-  private readonly background: () => boolean;
+  private readonly backgroundMode: () => boolean;
   constructor(bridge: ExtensionBridge, background: () => boolean = () => false) {
     this.bridge = bridge;
-    this.background = background;
+    this.backgroundMode = background;
   }
   get connected(): boolean { return this.bridge.connected; }
   get interactive(): boolean { return true; }
+  get background(): boolean { return this.backgroundMode(); }
   onTabCreated(listener: (tab: { id: string; openerId?: string; url: string }) => void): () => void {
     this.createdListeners.add(listener);
     return () => this.createdListeners.delete(listener);
   }
   private info(t: ExtTab): TabInfo { return { id: String(t.tabId), url: t.url, title: t.title, driver: 'extension' }; }
   async listTabs(): Promise<TabInfo[]> { return ((await this.bridge.call('listTabs', {})) as ExtTab[]).map((t) => this.info(t)); }
-  async openTab(url?: string): Promise<TabInfo> { return this.info(await this.bridge.call('openTab', { url, active: !this.background() }) as ExtTab); }
+  async openTab(url?: string): Promise<TabInfo> { return this.info(await this.bridge.call('openTab', { url, active: !this.background }) as ExtTab); }
   async closeTab(tabId: string): Promise<void> { await this.bridge.call('closeTab', { tabId: Number(tabId) }); }
-  async activateTab(tabId: string): Promise<void> {
-    if (!this.background()) await this.bridge.call('activateTab', { tabId: Number(tabId) });
+  async activateTab(tabId: string, opts: { show?: boolean } = {}): Promise<void> {
+    if (!this.background || opts.show) await this.bridge.call('activateTab', { tabId: Number(tabId) });
   }
   async attach(tabId: string): Promise<{ conn: CdpConnection; sessionId?: string }> {
     const id = Number(tabId);
     const existing = this.tabs.get(id);
     if (existing && !existing.closed) return { conn: existing };
-    // Concurrent callers share one attachment, so a failed focus setup cannot detach a debugger another caller uses.
-    const pending = this.attaching.get(id);
-    if (pending) return pending;
-    const attaching = this.connect(id).finally(() => this.attaching.delete(id));
-    this.attaching.set(id, attaching);
-    return attaching;
-  }
-  private async connect(id: number): Promise<{ conn: CdpConnection }> {
     await this.bridge.call('attach', { tabId: id });
     const conn = new ExtTabConnection(this.bridge, id);
-    // Keep background documents responsive without activating the user's Chrome window.
-    try {
-      if (this.background()) await conn.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    } catch (error) {
-      conn.d.shutdown('background focus setup failed');
-      await this.bridge.call('detach', { tabId: id }).catch(() => {});
-      throw error;
-    }
     this.tabs.set(id, conn);
     return { conn };
   }

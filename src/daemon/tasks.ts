@@ -42,6 +42,7 @@ function portFor(ctx: DaemonContext, initial: TabHandle, taskId: string): TabPor
       void ctx.browsers.driver(tab.driver).then((d) => d.activateTab(tab.targetId)).catch(() => {});
     },
     interactive: () => ctx.browsers.interactive(tab.id),
+    background: () => ctx.browsers.background(tab.id),
   };
 }
 

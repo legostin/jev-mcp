@@ -108,17 +108,41 @@ describe.skipIf(!cft || !existsSync(join(extDir, 'worker.js')))('Chrome extensio
 
   it('works in an inactive tab with focus emulation in background mode', async () => {
     await client.call('settings.set', { path: 'driver.background', value: true });
+    let opened: any;
     try {
       const url = `${fixtures.url('counter.html')}?background=1`;
-      const opened = await client.call('tabs.open', { url, driver: 'extension' });
+      opened = await client.call('tabs.open', { url, driver: 'extension' });
       await client.call('tabs.select', { tab: opened.tab });
-      const [tab] = await panel.eval(`chrome.tabs.query({ url: ${JSON.stringify(url)} })`);
-      expect(tab.active).toBe(false);
+      const active = async () => (await panel.eval(`chrome.tabs.query({ url: ${JSON.stringify(url)} })`))[0].active;
+      expect(await active()).toBe(false);
       expect((await client.call('page.evaluate', { tab: opened.tab, expression: 'document.hasFocus()' })).value).toBe(true);
       const typed = await client.call('page.act', { tab: opened.tab, action: 'type', intent: 'the name input', value: 'Kim' });
       expect(typed.diff).toContain('value="Kim"');
+      // A CAPTCHA or a login needs the person: the agent can still bring the tab forward.
+      await client.call('tabs.select', { tab: opened.tab, show: true });
+      expect(await active()).toBe(true);
     } finally {
       await client.call('settings.set', { path: 'driver.background', value: false });
+      if (opened) await client.call('tabs.close', { tab: opened.tab }).catch(() => {});
+    }
+  });
+
+  it('applies a background mode change to tabs that are already attached', async () => {
+    const tabs: string[] = [];
+    try {
+      const first = await client.call('tabs.open', { url: `${fixtures.url('counter.html')}?attached=1`, driver: 'extension' });
+      tabs.push(first.tab);
+      // Opening a second tab leaves the first one inactive, so it loses focus.
+      tabs.push((await client.call('tabs.open', { url: `${fixtures.url('counter.html')}?attached=2`, driver: 'extension' })).tab);
+      const focused = async () => (await client.call('page.evaluate', { tab: first.tab, expression: 'document.hasFocus()' })).value;
+      expect(await focused()).toBe(false);
+      await client.call('settings.set', { path: 'driver.background', value: true });
+      expect(await until(async () => (await focused()) === true, 5_000)).toBe(true);
+      await client.call('settings.set', { path: 'driver.background', value: false });
+      expect(await until(async () => (await focused()) === false ? 'off' : null, 5_000)).toBe('off');
+    } finally {
+      await client.call('settings.set', { path: 'driver.background', value: false });
+      for (const tab of tabs) await client.call('tabs.close', { tab }).catch(() => {});
     }
   });
 

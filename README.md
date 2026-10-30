@@ -169,7 +169,7 @@ To keep working in another app while jev uses the extension, turn on background 
 jev settings set driver.background true
 ```
 
-New tabs then open inactive and selecting a tab no longer brings the Chrome window to the front; CDP focus emulation lets the background page accept input. It is off by default and applies only to the extension. Tabs jev is already attached to get focus emulation after `jev stop` (run it while no task is running). Windows that a site opens itself and browser dialogs can still ask for attention.
+New tabs then open inactive, and selecting a tab neither switches to it nor brings the Chrome window to the front; CDP focus emulation lets the background page accept input. It is off by default, applies only to the extension, and a change takes effect on tabs jev already works with. When a task needs the person (a CAPTCHA, a login), its question says so and the agent shows the tab with `jev_tabs` `select` and `show: true`. Windows that a site opens itself and browser dialogs can still ask for attention, and Chrome slows timers in background tabs, so long tasks can run slower there.
 
 ### Update or remove
 

@@ -61,6 +61,7 @@ export class PageSession extends Emitter<PageEvents> {
   private inputWindows: { from: number; to: number }[] = [];
   private offListeners: (() => void)[] = [];
   private closedReason: string | null = null;
+  private focusEmulated: boolean;
 
   private constructor(driver: BrowserDriver, tabId: string, conn: CdpConnection, sessionId: string | undefined) {
     super();
@@ -68,6 +69,7 @@ export class PageSession extends Emitter<PageEvents> {
     this.tabId = tabId;
     this.conn = conn;
     this.sessionId = sessionId;
+    this.focusEmulated = !!driver.background;
   }
 
   static async open(driver: BrowserDriver, tabId: string): Promise<PageSession> {
@@ -164,11 +166,26 @@ export class PageSession extends Emitter<PageEvents> {
       send('DOM.enable'),
       send('Network.enable', { maxTotalBufferSize: 0, maxResourceBufferSize: 0 }).catch(() => {}),
       send('Accessibility.enable').catch(() => {}),
+      this.focusEmulated ? this.emulateFocus(sessionId, true) : undefined,
     ]);
     await send('Page.addScriptToEvaluateOnNewDocument', { source: INIT_SCRIPT, runImmediately: true }).catch(() => {});
     await send('Runtime.evaluate', { expression: INIT_SCRIPT, includeCommandLineAPI: false }).catch(() => {});
     await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => {});
     if (isPage) await send('Page.setLifecycleEventsEnabled', { enabled: true }).catch(() => {});
+  }
+
+  /** Brings focus emulation in line with the driver's background mode (it can change while the page is open). */
+  async syncFocusEmulation(): Promise<void> {
+    const want = !!this.driver.background;
+    if (want === this.focusEmulated) return;
+    this.focusEmulated = want;
+    await Promise.all([this.sessionId, ...this.children.keys()].map((s) => this.emulateFocus(s, want)));
+  }
+
+  /** An inactive tab reports focus and takes typed input; without it the page still works, so failures are logged. */
+  private emulateFocus(sessionId: string | undefined, enabled: boolean): Promise<void> {
+    return this.conn.send('Emulation.setFocusEmulationEnabled', { enabled }, sessionId)
+      .then(() => {}, (e) => log.debug('focus emulation failed', e));
   }
 
   /** The main frame first, then out-of-process iframes. Same-process iframes are part of the main snapshot. */

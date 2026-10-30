@@ -13,7 +13,8 @@ export interface BrowserDriver {
   /** Attaches to a tab; commands for the page go to `sessionId` on `conn`. */
   attach(tabId: string): Promise<{ conn: CdpConnection; sessionId?: string }>;
   detach(tabId: string): Promise<void>;
-  activateTab(tabId: string): Promise<void>;
+  /** Selects a tab; in background mode only `show` (a tab the person must see) brings it to the front. */
+  activateTab(tabId: string, opts?: { show?: boolean }): Promise<void>;
   close(): Promise<void>;
   onDisconnect(listener: () => void): () => void;
   /** New tabs, with the tab that opened them when known (popups, target=_blank, window.open). */
@@ -21,4 +22,6 @@ export interface BrowserDriver {
   readonly connected: boolean;
   /** Whether a person can see and use this browser (headless browsers cannot be taken over). */
   readonly interactive?: boolean;
+  /** Background mode: tabs stay inactive and pages get focus emulation, so the person's window keeps the focus. */
+  readonly background?: boolean;
 }

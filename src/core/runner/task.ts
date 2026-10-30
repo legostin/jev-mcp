@@ -66,6 +66,8 @@ export interface TabPort {
   switchTo?(tabId: string): void;
   /** False for browsers nobody can see (headless): user takeover detection is skipped. */
   interactive?(): boolean;
+  /** True when the tab is kept in the background (driver.background): the person has to be shown it. */
+  background?(): boolean;
 }
 
 export interface TaskDeps {
@@ -1484,9 +1486,12 @@ export class Task extends Emitter<TaskEvents> {
     switch (sub.type) {
       case 'blocker': {
         const headless = this.deps.port.interactive?.() === false;
+        const background = !headless && this.deps.port.background?.() === true;
         const summary = headless
           ? `${sub.summary} This tab runs in a headless browser nobody can see: restart the task with driver "extension" (your Chrome) or set driver.chromium.headless=false, or abort.`
-          : sub.summary;
+          : background
+            ? `${sub.summary} The tab is in the background (driver.background): bring it to the front with jev_tabs select tab:"${this.deps.port.tabId}" show:true when the person is ready.`
+            : sub.summary;
         const ans = await this.escalate('blocker', summary, { answer_with: ['continue', 'hint', 'abort'], context: { headless } });
         return { outcome: 'retry', note: `blocker (${sub.kind}): ${ans.type}` };
       }

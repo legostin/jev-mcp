@@ -207,6 +207,19 @@ describe('Task runner (scripted JEV, real browser)', () => {
     expect(await page.evaluate('document.getElementById("email").value')).toBe('bob@example.com');
   });
 
+  it('tells the agent how to show a background tab that needs the person', async () => {
+    const page = await h.open('login.html');
+    const jev = scripted({ pageKind: () => 'captcha', targets: [] });
+    const task = new Task(taskSpecSchema.parse({ goal: 'Sign in' }), {
+      sessionId: 's1', getConfig: () => parseConfig({ trace: { screenshots: false } }), jev, trace, port: { ...port(page), background: () => true },
+    });
+    const questions: any[] = [];
+    task.on('escalation', (q) => { questions.push(q); task.answer(q.question_id, { type: 'abort' }); });
+    await task.start();
+    expect(questions[0].kind).toBe('blocker');
+    expect(questions[0].summary).toContain('jev_tabs select tab:"t1" show:true');
+  });
+
   it('rolls back a failed trial and tries the next candidate', async () => {
     const page = await h.open('filters.html');
     const jev = scripted({

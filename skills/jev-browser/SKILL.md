@@ -25,7 +25,7 @@ JEV is a *System One* model. It makes typed decisions (which element, which opti
 - `driver: "extension"` is the user's own Chrome, with their logins, through the jev extension. Prefer it for sites with accounts, bot checks or CAPTCHAs (travel, shopping, banking), and whenever the user may need to step in.
 - `driver: "chromium"` is jev's own Chrome profile. A headless profile cannot show a CAPTCHA to anyone, so do not use headless for sites with bot protection.
 - The default `auto` uses the extension when it is connected. `jev_tabs` shows whether it is, and lists the tabs jev works with (the user's other tabs only with `all: true`). If the user needs the extension and it is not connected, tell them to load it and run `jev pair`.
-- With `driver.background` on (off by default), extension tabs open inactive and selecting a tab does not bring Chrome to the front, so the user can keep typing in other apps. Pass an explicit `tab` when working across tabs. Windows a site opens and browser dialogs can still need the user; say why before asking them to bring Chrome forward.
+- With `driver.background` on (off by default), extension tabs open inactive and selecting a tab does not bring Chrome to the front, so the user can keep typing in other apps. Pass an explicit `tab` when working across tabs. When the person has to act in a tab (a CAPTCHA, a login), say why, then bring it forward with `jev_tabs` `select` and `show: true`; windows a site opens and browser dialogs can still need the user too.
 
 ## Write a task
 

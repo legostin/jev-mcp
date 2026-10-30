@@ -97,11 +97,11 @@ export function registerPageApi(rpc: RpcServer, ctx: DaemonContext): void {
     return { closed: p.tab };
   });
 
-  rpc.register('tabs.select', async (p: { tab: string }, conn) => {
+  rpc.register('tabs.select', async (p: { tab: string; show?: boolean }, conn) => {
     const t = ctx.browsers.get(p.tab);
     ctx.browsers.setCurrent(session(conn), t.id);
     const d = await ctx.browsers.driver(t.driver);
-    await d.activateTab(t.targetId).catch(() => {});
+    await d.activateTab(t.targetId, { show: p.show }).catch(() => {});
     return { tab: t.id, url: t.url, title: t.title };
   });
 

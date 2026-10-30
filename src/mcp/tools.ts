@@ -170,15 +170,16 @@ export function registerPageTools(server: McpServer, deps: ToolDeps): void {
       tab: z.string().optional(),
       driver: z.enum(['auto', 'extension', 'chromium']).optional(),
       all: z.boolean().optional().describe('list: include every tab of the user\'s Chrome, not only the tabs jev works with.'),
+      show: z.boolean().optional().describe('select: bring the tab and its Chrome window to the front even in background mode (driver.background), e.g. for a CAPTCHA or login the person must handle.'),
     },
-  }, wrap(deps, async (a: { action?: string; url?: string; tab?: string; driver?: string; all?: boolean }) => {
+  }, wrap(deps, async (a: { action?: string; url?: string; tab?: string; driver?: string; all?: boolean; show?: boolean }) => {
     const action = a.action ?? 'list';
     if (action === 'open') {
       const r = await bridge.call('tabs.open', { url: a.url, driver: a.driver });
       return text(`opened ${r.tab} (${r.driver}) · ${r.url}\n${r.overview}`);
     }
     if (action === 'close') { if (!a.tab) return errorResult('close needs tab'); await bridge.call('tabs.close', { tab: a.tab }); return text(`closed ${a.tab}`); }
-    if (action === 'select') { if (!a.tab) return errorResult('select needs tab'); const r = await bridge.call('tabs.select', { tab: a.tab }); return text(`current tab ${r.tab} · ${r.url}`); }
+    if (action === 'select') { if (!a.tab) return errorResult('select needs tab'); const r = await bridge.call('tabs.select', { tab: a.tab, show: a.show }); return text(`current tab ${r.tab} · ${r.url}`); }
     const r = await bridge.call('tabs.list');
     // The user's own tabs stay out of the agent's context (and out of sight) unless asked for.
     const shown = a.all ? r.tabs : r.tabs.filter((t: any) => t.used);
@@ -205,7 +206,7 @@ export function registerPageTools(server: McpServer, deps: ToolDeps): void {
       'Useful paths: provider ("openrouter" | "typesafe"), providers.openrouter.apiKey, providers.typesafe.apiKey, providers.<p>.model,',
       'failover, confidence.preset ("cautious" | "balanced" | "autonomous"), confidence.act, confidence.escalate (0 disables confidence-driven questions),',
       'confidence.overrides["ground.choice"], domains.<host>.confidence, domains.<host>.irreversible ("ask" | "allow"), driver.default,',
-      'driver.chromium.headless, budgets.perTaskUsd, limits.maxSteps, trace.screenshots.',
+      'driver.background (extension tabs stay inactive so the user keeps working in other apps), driver.chromium.headless, budgets.perTaskUsd, limits.maxSteps, trace.screenshots.',
     ].join(' '),
     inputSchema: {
       action: z.enum(['get', 'set']).optional().describe('Default "get".'),

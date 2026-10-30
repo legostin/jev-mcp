@@ -16,6 +16,7 @@ const FIELDS: Field[] = [
   { path: 'confidence.overrides', label: 'Per-decision overrides (JSON)', kind: 'json' },
   { path: 'domains', label: 'Per-domain settings (JSON)', kind: 'json' },
   { path: 'driver.default', label: 'Default driver', kind: 'select', options: ['auto', 'extension', 'chromium'] },
+  { path: 'driver.background', label: 'Background mode (extension tabs stay inactive)', kind: 'bool' },
   { path: 'driver.chromium.headless', label: 'Headless chromium', kind: 'bool' },
   { path: 'notify.channel', label: 'Push questions via Claude Code channels', kind: 'bool' },
   { path: 'budgets.perTaskUsd', label: 'Budget per task (USD)', kind: 'number', step: 0.05 },

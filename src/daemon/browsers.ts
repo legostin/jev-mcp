@@ -130,6 +130,16 @@ export class BrowserManager {
     return d?.interactive ?? true;
   }
 
+  /** Whether the tab is kept in the background (the person has to be shown it). */
+  background(id: string): boolean {
+    return this.get(id).driver === 'extension' && !!this.extensionDriver?.background;
+  }
+
+  /** Applies a background mode change to the pages that are already open. */
+  syncFocusEmulation(): void {
+    for (const t of this.tabs.values()) if (t.page && !t.page.closed) void t.page.syncFocusEmulation();
+  }
+
   private register(driver: DriverKind, targetId: string, url: string, title: string): TabHandle {
     const key = `${driver}:${targetId}`;
     const existing = this.byTarget.get(key);
