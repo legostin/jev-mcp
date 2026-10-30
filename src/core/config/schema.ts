@@ -68,6 +68,7 @@ export const configSchema = z.object({
   })).default({}),
   driver: z.object({
     default: z.enum(['auto', 'extension', 'chromium']).default('auto'),
+    background: z.boolean().default(false),
     extensionPort: z.number().int().min(1024).max(65535).default(47913),
     extensionIds: z.array(z.string()).default([]),
     chromium: z.object({

@@ -18,6 +18,7 @@ describe('config store', () => {
     expect(cfg.providers.typesafe.baseUrl).toBe('https://api.typesafe.ai/v1');
     expect(cfg.confidence.preset).toBe('balanced');
     expect(cfg.limits.stateTokenTarget).toBe(6000);
+    expect(cfg.driver.background).toBe(false);
   });
 
   it('persists keys with owner-only permissions', () => {
